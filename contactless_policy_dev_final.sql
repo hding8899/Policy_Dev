@@ -10,10 +10,11 @@ key: user_id, auth_event_created_ts|auth_id
 */
 
 
-create  or replace table risk.test.risk_score_simu as(
+create or replace table risk.test.risk_score_simu as(
 
     select  
-    rae.auth_event_id
+    rae.auth_id
+    ,rae.auth_event_id
     ,rae.auth_event_created_ts
     
     ,rae.user_id
@@ -73,7 +74,7 @@ create  or replace table risk.test.risk_score_simu as(
     
     
     where 1=1
-    and rae.auth_event_created_ts::date between '2022-05-01' and '2022-08-31'
+    and (rae.auth_event_created_ts::date between '2022-07-01' and '2022-08-31' /*for dev*/ or rae.auth_event_created_ts::date >= '2022-10-10') /*for vol estimation and justification*/
     and rae.original_auth_id=0
     and rae.entry_type like '%Contactless%'/*relaxed to test strategies for other txn type*/
     and rae.response_cd in ('00','10') /*approved txn*/
@@ -86,16 +87,9 @@ create  or replace table risk.test.risk_score_simu as(
 
 
 
-/*basic stats*/
-select count(*),count(distinct auth_event_id) from risk.test.risk_score_simu;
---58,366,299
-select top 10 * from risk.test.risk_score_simu;
-
-
-  
-
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-per ep's all ch, pull pre-txn dispute/unauth dispute records
+user_id - dispute history
+
 
 */
 create or replace table risk.test.risk_score_dispute_hist as (
@@ -150,58 +144,14 @@ select ep.auth_event_id
     group by 1 
 );
     
-    
-    
-    
- select top 10 * from risk.test.risk_score_dispute_hist;   
- select count(*) from risk.test.risk_score_dispute_hist;  
- 
-/*perf evaluation
-
-width_bucket(cnt_disp_p30, 1, 9, 9)>=9 and risk_score>80:117 txn, 18.8% dispute rate, 2915 dispute sum
-width_bucket(cnt_disp_unauth_p30, 1, 6, 6)>=6 and risk_score>80: 160 txn, 18.8%, 5k dispute sum
-width_bucket(-1*sum_disp_p30, 1, 1000, 10)>=1000 & risk_score>80: 177, 25%, 16.7k
-width_bucket(-1*sum_disp_unauth_p30, 1, 1000, 10) & risk_score>80: 137, 30%, 15k
-
-*/
-
-select 
-width_bucket(cnt_disp_p7, 1, 10, 10) as bin
-, min(cnt_disp_p7) as min_val, max(cnt_disp_p7) as max_val
-, count(*) as cnt_txn
-
-, avg(dispute_ind) as dispute_rate
-, avg(dispute_unauth_ind) as dispute_unauth_rate
-, avg(dispute_aprv_ind) as dispute_appv_rate
-, avg(dispute_unauth_aprv_ind) as dispute_unauth_appv_rate
-
-, sum(dispute_ind) as dispute_cnt
-, sum(dispute_unauth_ind) as dispute_unauth_cnt
-, sum(dispute_aprv_ind) as dispute_appv_cnt
-, sum(dispute_unauth_aprv_ind) as dispute_unauth_appv_cnt
-
-, sum(final_amt) as sum_txn
-, sum(case when dispute_ind=1 then final_amt else 0 end) as sum_dispute_sum
-, sum(case when dispute_unauth_ind=1 then final_amt else 0 end) as sum_dispute_unauth_sum
-, sum(case when dispute_unauth_aprv_ind=1 then final_amt else 0 end) as sum_dispute_unauth_appv_sum
-   from risk.test.risk_score_dispute_hist a
-   left join risk.test.risk_score_simu b on (a.auth_event_id=b.auth_event_id)
-    where 1=1
-    and risk_score>40
-    --and sum_disp_unauth_p30 is not null
-    --and available_funds<0
-    --and trunc(to_date(auth_event_created_ts),'month')='2022-08-01'
-    group by 1
-    order by 1
-;
-
-
+   
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-provisioining history and device used @provisioning time and if it is a new device
+user_id - provisioning history
 
 */
+
 create or replace table risk.test.risk_score_provision_hist as (
     with t1 as(
     select a.auth_event_id, a.user_id, a.auth_event_created_ts as auth_ts, b.auth_event_created_ts as provision_ts, a.auth_event_created_ts::date-b.auth_event_created_ts::date as auth_provi_daydiff, b.response_cd
@@ -231,54 +181,8 @@ create or replace table risk.test.risk_score_provision_hist as (
 
 
 
-/*profiling*/
-
-select count(*) from risk.test.risk_score_provision_hist;
-select top 10 *from risk.test.risk_score_provision_hist;
-
-
-
-
-
-/*perf evaluation
-
-none of the provision related attributes indicated good effect
-*/
-
-
-select 
-width_bucket(min_suc_auth_provi_gap, 0, 60, 12) as bin
-, min(min_suc_auth_provi_gap) as min_val, max(min_suc_auth_provi_gap) as max_val
-, count(*) as cnt_txn
-
-, avg(dispute_ind) as dispute_rate
-, avg(dispute_unauth_ind) as dispute_unauth_rate
-, avg(dispute_aprv_ind) as dispute_appv_rate
-, avg(dispute_unauth_aprv_ind) as dispute_unauth_appv_rate
-
-, sum(dispute_ind) as dispute_cnt
-, sum(dispute_unauth_ind) as dispute_unauth_cnt
-, sum(dispute_aprv_ind) as dispute_appv_cnt
-, sum(dispute_unauth_aprv_ind) as dispute_unauth_appv_cnt
-
-, sum(final_amt) as sum_txn
-, sum(case when dispute_ind=1 then final_amt else 0 end) as sum_dispute_sum
-, sum(case when dispute_unauth_ind=1 then final_amt else 0 end) as sum_dispute_unauth_sum
-, sum(case when dispute_unauth_aprv_ind=1 then final_amt else 0 end) as sum_dispute_unauth_appv_sum
-   from risk.test.risk_score_provision_hist a
-   left join risk.test.risk_score_simu b on (a.auth_event_id=b.auth_event_id)
-    where 1=1
-    and risk_score>70
-    --and available_funds<0
-    --and trunc(to_date(b.auth_event_created_ts),'month')< '2022-08-01'
-    group by 1
-    order by 1
-;
-
-
-
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-usage: dvc tz platform etc
+user_id - usage info: application/cta dvc related login dvc/tz/carrier etc.
 
 with feature store features simulated: 
     user_id__usage__2d__7d__v1___nunique__device_ids
@@ -286,36 +190,21 @@ with feature store features simulated:
     etc.
 
 */
+
 create or replace table risk.test.risk_score_login_hist as(
 select 
 a.auth_event_id
-/*look back 90 days*/ 
-,count(distinct device_id) as nunique__device_ids_p90
-,count(distinct ip) as nunique__ips_p90
-,count(distinct network_carrier) as nunique__network_carriers_p90
-,count(distinct timezone) as nunique__timezones_p90
-,count(distinct os_name) as nunique__os_versions_p90
-,count(distinct intnl_network_carrier) as nunique__intnl_network_carrier_p90
-,count(distinct africa_network_carriers) as nunique__africa_network_carriers_p90
-,count(distinct africa_timezones) as nunique__africa_timezones_p90
- /*look back 30 days*/    
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then device_id end) as nunique__device_ids_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then ip end) as nunique__ips_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then network_carrier end) as nunique__network_carriers_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then timezone end) as nunique__timezones_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then os_name end) as nunique__os_versions_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then intnl_network_carrier end) as nunique__intnl_network_carrier_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then africa_network_carriers end) as nunique__africa_network_carriers_p30
-,count(distinct case when b.session_timestamp >= dateadd(day,-30,a.auth_event_created_ts) then africa_timezones end) as nunique__africa_timezones_p30
-/*look back 7 days*/       
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then device_id end) as nunique__device_ids_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then ip end) as nunique__ips_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then network_carrier end) as nunique__network_carriers_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then timezone end) as nunique__timezones_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then os_name end) as nunique__os_versions_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then intnl_network_carrier end) as nunique__intnl_network_carrier_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then africa_network_carriers end) as nunique__africa_network_carriers_p7d
-,count(distinct case when b.session_timestamp >= dateadd(day,-7,a.auth_event_created_ts) then africa_timezones end) as nunique__africa_timezones_p7d
+/*look back 30 days*/ 
+,count(distinct device_id) as nunique__device_ids_p7d
+,count(distinct ip) as nunique__ips_p7d
+,count(distinct network_carrier) as nunique__network_carriers_p7d
+,count(distinct timezone) as nunique__timezones_p7d
+,count(distinct os_name) as nunique__os_versions_p7d
+,count(distinct intnl_network_carrier) as nunique__intnl_network_carrier_p7d
+,count(distinct africa_network_carriers) as nunique__africa_network_carriers_p7d
+,count(distinct africa_timezones) as nunique__africa_timezones_p7d
+
+
 /*look back 2 days*/       
 ,count(distinct case when b.session_timestamp >= dateadd(day,-2,a.auth_event_created_ts) then device_id end) as nunique__device_ids_p2d
 ,count(distinct case when b.session_timestamp >= dateadd(day,-2,a.auth_event_created_ts) then ip end) as nunique__ips_p2d
@@ -363,7 +252,7 @@ a.auth_event_id
 
     from risk.test.risk_score_simu a
     left join (
-                select user_id, session_timestamp, device_id, network_carrier, os_name, ip, timezone, platform, zip_code
+                select user_id, timestamp as session_timestamp, device_id, network_carrier, os_name, ip, timezone /*, platform, zip_code */
                 ,case when lower(network_carrier) not in
                           ('t-mobile', 'at&t', 'metro by t-mobile', 'verizon', 'boost mobile', 'null', 'cricket',
                            'tfw', 'sprint', '','metro', 'boost', 'home','spectrum', 'xfinity mobile', 'verizon wireless', 'assurance wireless',
@@ -372,19 +261,19 @@ a.auth_event_id
                            and lower(network_carrier) not in ('roaming indicator off', 'searching for service') 
                            then network_carrier end as africa_network_carriers
                 ,case when lower(timezone) like '%africa%' then timezone end as africa_timezones
-                from edw_db.feature_store.atom_user_sessions_v2
+                from edw_db.feature_store.atom_app_events_v2
+        
                 
-              ) b on (a.user_id=b.user_id and b.session_timestamp between dateadd(day,-90,a.auth_event_created_ts) and a.auth_event_created_ts)
+              ) b on (a.user_id=b.user_id and b.session_timestamp between dateadd(day,-7,a.auth_event_created_ts) and a.auth_event_created_ts)
     group by 1
 );
 
 
-select count(*) from risk.test.risk_score_login_hist;
-select top 10 * from  risk.test.risk_score_login_hist;
+
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 
-login atom score model score summary
+user_id - atom score summary
 
 with feature store features simulated: 
     user_id__atom_score__0s__2h__v1___nunique__device_ids 
@@ -415,12 +304,8 @@ select a.auth_event_id
 
 
 
-select count(*) from risk.test.risk_score_atom;
-select top 10 * from  risk.test.risk_score_atom;
-
-
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-previous same merchant/contactless txn made
+user_id - same mrch txn history
 
 */
 create or replace table risk.test.risk_score_same_mrch_txn as(
@@ -456,54 +341,9 @@ create or replace table risk.test.risk_score_same_mrch_txn as(
 );
     
 
-  
-/*profiling*/
-
-select count(*) from risk.test.risk_score_same_mrch_txn;
-select top 100 * from risk.test.risk_score_same_mrch_txn;
-
-
-/*
-performance evaluation
-*/
-
-
-select 
-width_bucket(LAST_CUR_AUTH_GAP, 0, 100, 20) as bin
-, min(LAST_CUR_AUTH_GAP) as min_val, max(LAST_CUR_AUTH_GAP) as max_val
-, count(*) as cnt_txn
-
-, avg(dispute_ind) as dispute_rate
-, avg(dispute_unauth_ind) as dispute_unauth_rate
-, avg(dispute_aprv_ind) as dispute_appv_rate
-, avg(dispute_unauth_aprv_ind) as dispute_unauth_appv_rate
-
-, sum(dispute_ind) as dispute_cnt
-, sum(dispute_unauth_ind) as dispute_unauth_cnt
-, sum(dispute_aprv_ind) as dispute_appv_cnt
-, sum(dispute_unauth_aprv_ind) as dispute_unauth_appv_cnt
-
-, sum(final_amt) as sum_txn
-, sum(case when dispute_ind=1 then final_amt else 0 end) as sum_dispute_sum
-, sum(case when dispute_unauth_ind=1 then final_amt else 0 end) as sum_dispute_unauth_sum
-, sum(case when dispute_unauth_aprv_ind=1 then final_amt else 0 end) as sum_dispute_unauth_appv_sum
-   from risk.test.risk_score_same_mrch_txn a
-   left join risk.test.risk_score_simu b on (a.auth_event_id=b.auth_event_id)
-    where 1=1
-    and risk_score>50
-    --and a.provision_login_ts is not null
-    --and a.provi_dvc_used_ind=0
-    --and available_funds<0
-    --and trunc(to_date(b.auth_event_created_ts),'month')< '2022-08-01'
-    group by 1
-    order by 1
-;
-
-
-
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-realtime_vel
+user_id - txn vel
 
 with feature store features simulated: 
     user_id__realtime_auth_vel
@@ -576,10 +416,6 @@ create or replace table risk.test.risk_score_realauth_vel as(
 );
 
 
-select count(*) from risk.test.risk_score_realauth_vel;
-select top 10 * from risk.test.risk_score_realauth_vel;
-
-
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -635,9 +471,6 @@ create or replace table risk.test.risk_score_transfer_activity as(
     group by 1
 );
 
-
-select top 10 * from risk.test.risk_score_transfer_activity ;
-select count(*) from risk.test.risk_score_transfer_activity ;
 
 
 
@@ -695,8 +528,7 @@ create or replace table risk.test.risk_score_app_action as(
 );
 
 
-select top 10 * from risk.test.risk_score_app_action ;
-select count(*) from risk.test.risk_score_app_action ;
+
 
 
 
@@ -751,12 +583,12 @@ create or replace table risk.test.risk_score_atm_events as(
 
 );
 
-select count(*) from risk.test.risk_score_atm_events;
-select top 10 * from risk.test.risk_score_atm_events;
+
+
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-pii chg: phone email
+user_id - pii chg: phone email by user or total
 
 with feature store features simulated:
     user_id__pii_update__0s__7d__v1___count__phone_change
@@ -825,15 +657,11 @@ create or replace table risk.test.risk_score_pii_update as(
 
 );
 
-select count(*) from risk.test.risk_score_pii_update;
-select top 10 * from risk.test.risk_score_pii_update;
-
-
 
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-merchant level risk - dispute rate and dispute deny rate
+mrch level - dispute rate and dispute deny rate
 
 
 */
@@ -856,8 +684,6 @@ a.auth_event_id
 
 
 
-select top 1000 * from risk.test.risk_score_mrch_risk where avg_decline_rate>0;
-
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -867,6 +693,7 @@ final dev ep(after global exclu)
 
 create or replace table risk.test.risk_score_final_ep as (
     select a.*
+    /*
     , case when a.dispute_ind=1 then a.final_amt else 0 end as disp_amt
     , case when a.dispute_unauth_ind=1 then a.final_amt else 0 end as unauth_disp_amt
     , b.cnt_disp_life
@@ -893,7 +720,7 @@ create or replace table risk.test.risk_score_final_ep as (
     , zeroifnull(-1*b.avg_disp_unauth_p3) as avg_disp_unauth_p3
     , zeroifnull(-1*b.sum_disp_p3) as sum_disp_p3
     , zeroifnull(-1*b.sum_disp_unauth_p3) as sum_disp_unauth_p3
-
+    */
     , c.count__email_change_by_user_p30
     , c.count__phone_change_by_user_p30
     , c.count__email_change_p30
@@ -922,7 +749,7 @@ create or replace table risk.test.risk_score_final_ep as (
     , c.count__phone_change_by_user_p5m
     , c.count__email_change_p5m
     , c.count__phone_change_p5m
-
+    /*
     , e.cnt_pre_txn
     , e.cnt_pre_appv_txn
     , e.max_pre_txn
@@ -937,7 +764,8 @@ create or replace table risk.test.risk_score_final_ep as (
     , e.cnt_pre_unauthdisp_txn
     , e.ratio_pre_disp_txn
     , e.ratio_pre_unauthdisp_txn
-    
+    */
+    /*
     , f.nunique__device_ids_p90
     , f.nunique__ips_p90
     , f.nunique__network_carriers_p90
@@ -954,6 +782,7 @@ create or replace table risk.test.risk_score_final_ep as (
     , f.nunique__intnl_network_carrier_p30
     , f.nunique__africa_network_carriers_p30
     , f.nunique__africa_timezones_p30
+    */
     , f.nunique__device_ids_p7d
     , f.nunique__ips_p7d
     , f.nunique__network_carriers_p7d
@@ -1001,7 +830,7 @@ create or replace table risk.test.risk_score_final_ep as (
     , f.nunique__os_versions_p5m
     , f.nunique__intnl_network_carrier_p5m
     , f.nunique__africa_network_carriers_p5m
-    
+    /*
     , h.cnt_provision
     , h.cnt_fail_provision
     , h.rate_fail_provision
@@ -1013,7 +842,7 @@ create or replace table risk.test.risk_score_final_ep as (
     , h.first_suc_provision_dt
     , h.min_suc_auth_provi_gap
     , h.max_suc_auth_provi_gap
-    
+    */
     , g.max_atom_score_ts
     , g.max_atom_score_p30
     , g.max_atom_score_p3d
@@ -1023,7 +852,7 @@ create or replace table risk.test.risk_score_final_ep as (
     , g.cnt_dist_dvc_p3d
     , g.cnt_dist_dvc_p1d
     , g.cnt_dist_dvc_p2h
-    
+    /*
     , i.cnt_txn as cnt_mrch_txn_p2y
     , i.avg_disp_rate as avg_mrch_disp_rate
     , i.avg_disp_decline_rate as avg_mrch_disp_deny_rate
@@ -1094,7 +923,8 @@ create or replace table risk.test.risk_score_final_ep as (
     , l.count__event_login_failed_p2h
     , l.count__event_sign_out_button_tapped_p2h
     , l.count__event_admin_button_clicked_p2h
-    
+    */
+    /*
     , m.last__event_atm_balance_inquiry_timestamp
     , m.last__event_member_atm_finder_timestamp
     , m.last__event_map_pin_tapped_timestamp
@@ -1107,28 +937,27 @@ create or replace table risk.test.risk_score_final_ep as (
     , m.count__event_atm_finder_p2h
     , m.count__event_map_pin_tapped_p2h
     , m.count__event_cash_locations_p2h
-
+    */
         from risk.test.risk_score_simu a
-        left join risk.test.risk_score_dispute_hist b on (a.auth_event_id=b.auth_event_id)
+        --left join risk.test.risk_score_dispute_hist b on (a.auth_event_id=b.auth_event_id)
         left join risk.test.risk_score_pii_update c on (a.auth_event_id=c.auth_event_id)
         --left join risk.test.risk_score_piichg_hist c2 on (a.auth_event_id=c2.auth_event_id)
         --left join risk.test.risk_score_provi_dvc_hist d on (a.auth_event_id=d.auth_event_id)
-        left join risk.test.risk_score_same_mrch_txn e on (a.auth_event_id=e.auth_event_id)
+        --left join risk.test.risk_score_same_mrch_txn e on (a.auth_event_id=e.auth_event_id)
         left join risk.test.risk_score_login_hist f on (a.auth_event_id=f.auth_event_id)
         left join risk.test.risk_score_atom g on (a.auth_event_id=g.auth_event_id)
-        left join risk.test.risk_score_provision_hist h on (a.auth_event_id=h.auth_event_id)
-        left join risk.test.risk_score_mrch_risk i on (a.auth_event_id=i.auth_event_id)
-        left join risk.test.risk_score_realauth_vel j on (a.auth_event_id=j.auth_event_id)
-        left join risk.test.risk_score_transfer_activity k on (a.auth_event_id=k.auth_event_id)
-        left join risk.test.risk_score_app_action l on (a.auth_event_id=l.auth_event_id)
-        left join risk.test.risk_score_atm_events m on (a.auth_event_id=m.auth_event_id)
+        --left join risk.test.risk_score_provision_hist h on (a.auth_event_id=h.auth_event_id)
+        --left join risk.test.risk_score_mrch_risk i on (a.auth_event_id=i.auth_event_id)
+        --left join risk.test.risk_score_realauth_vel j on (a.auth_event_id=j.auth_event_id)
+        --left join risk.test.risk_score_transfer_activity k on (a.auth_event_id=k.auth_event_id)
+        --left join risk.test.risk_score_app_action l on (a.auth_event_id=l.auth_event_id)
+        --left join risk.test.risk_score_atm_events m on (a.auth_event_id=m.auth_event_id)
 
         where 1=1
         --and a.final_amt>=10 and mob_card<24
 );
 
 
-describe table risk.test.risk_score_final_ep ;
 
 
 
@@ -1141,8 +970,8 @@ policy dev exploration query
 
 select 
 
-width_bucket(NUNIQUE__DEVICE_IDS_P1D, 0, 20, 20) as bin
-, min(NUNIQUE__DEVICE_IDS_P1D) as min_val, max(NUNIQUE__DEVICE_IDS_P1D) as max_val
+width_bucket(MAX_ATOM_SCORE_P3D, 0, 1, 10) as bin
+, min(MAX_ATOM_SCORE_P3D) as min_val, max(MAX_ATOM_SCORE_P3D) as max_val
 , count(*) as cnt_txn
 
 , avg(dispute_ind) as dispute_rate
@@ -1161,7 +990,11 @@ width_bucket(NUNIQUE__DEVICE_IDS_P1D, 0, 20, 20) as bin
 , sum(case when dispute_unauth_aprv_ind=1 then final_amt else 0 end) as sum_dispute_unauth_appv_sum
    from risk.test.risk_score_final_ep
     where 1=1
+    and trunc(to_date(auth_event_created_ts),'month')< '2022-09-01'
     and COUNT__PHONE_CHANGE_P7D=0
+    --and MAX_ATOM_SCORE_P1D>=0.01
+    and nunique__timezones_p7d>=2
+    --and NUNIQUE__DEVICE_IDS_P1D<2
     --and MAX_ATOM_SCORE_P3D>=0.5
     --and datediff(day,last_provision_ts,auth_event_created_ts)=0
     --and COUNT__EMAIL_CHANGE_P2D>0
@@ -1192,7 +1025,7 @@ width_bucket(NUNIQUE__DEVICE_IDS_P1D, 0, 20, 20) as bin
     --and cnt_eml_chg_p3>0
     --and min_auth_provi_gap=1
     --and CNT_PHO_CHG_LIFE=0
-    and risk_score>40
+    --and risk_score>=35
     --and CNT_LOGIN_DVC_P2D>3
     --and cnt_login_dvc_p2d>2
     --and cnt_eml_chg_p3>0
@@ -1219,18 +1052,70 @@ width_bucket(NUNIQUE__DEVICE_IDS_P1D, 0, 20, 20) as bin
 ;
 
 
+--create or replace table risk.test.risk_score_final_ep_volesti as select * from risk.test.risk_score_final_ep;
+
+/*policy dev: no phone chg p7d*/
+select 
+case 
+     when final_amt>=50 and max_atom_score_p30>=0.35 and  NUNIQUE__DEVICE_IDS_P2H>=2 then 'dec 1.1'
+    
+     when final_amt>=50 and risk_score>=35 and MAX_ATOM_SCORE_P1D>=0.1 and nunique__timezones_p7d>=2 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.2'
+     
+     --when final_amt>=50 and count__email_change_p7d>0 and risk_score>=35 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.3'
+     --when final_amt>=100 and risk_score>=45 and datediff(day,last_provision_ts,auth_event_created_ts)=0 and COUNT__EVENT_LOGIN_FAILED_P2H>0 then 'dec 999'     
+      
+     else 'no dec' end as cat
+, count(*) as cnt_txnr
+
+, avg(dispute_ind) as dispute_rate
+, avg(dispute_unauth_ind) as dispute_unauth_rate
+, avg(dispute_aprv_ind) as dispute_appv_rate
+, avg(dispute_unauth_aprv_ind) as dispute_unauth_appv_rate
+
+, sum(dispute_ind) as dispute_cnt
+, sum(dispute_unauth_ind) as dispute_unauth_cnt
+, sum(dispute_aprv_ind) as dispute_appv_cnt
+, sum(dispute_unauth_aprv_ind) as dispute_unauth_appv_cnt
+
+, sum(final_amt) as sum_txn
+, sum(case when dispute_ind=1 then final_amt else 0 end) as sum_dispute_sum
+, sum(case when dispute_unauth_ind=1 then final_amt else 0 end) as sum_dispute_unauth_sum
+, sum(case when dispute_unauth_aprv_ind=1 then final_amt else 0 end) as sum_dispute_unauth_appv_sum
+   from risk.test.risk_score_final_ep
+    where 1=1
+    and COUNT__PHONE_CHANGE_P7D=0
+    and trunc(to_date(auth_event_created_ts),'month')< '2022-09-01'
+    --and CNT_PHO_CHG_LIFE=0   
+    --and cnt_eml_chg_p3>0
+    --and final_amt>=50
+    --and MIN_AUTH_PROVI_GAP>=7
+    --and risk_score>=35
+    --and final_amt>=25
+    --and cnt_login_dvc_p7d>=3
+    --and cnt_login_carrier_p7d>1
+    --and max_atom_score_p30>=0.2
+    --and max_atom_score_p30>=0.2
+    --and CNT_LOGIN_DVC_P7D>=2
+    --and available_funds<0
+    --and trunc(to_date(auth_event_created_ts),'month')< '2022-07-01'
+    --and to_date(auth_event_created_ts) >='2022-10-05'
+group by 1
+order by 1
+;
+
+
 
 /*policy dev: phone chg p7d*/
 select 
-case when final_amt>=200 and  (count__email_change_by_user_p1d-count__email_change_by_user_p5m>=1 and (nunique__device_ids_p5m>=1 or nunique__device_ids_p2h-nunique__device_ids_p5m>=1))   then 'dec 1.0'
+case when final_amt>=200 and max_atom_score_p1d>=0.1 and  (count__email_change_by_user_p7d-count__email_change_by_user_p5m>=1)   then 'dec 1.1'
      --when final_amt>=200 and (NUNIQUE__TIMEZONES_P2H-NUNIQUE__TIMEZONES_P5M>=2)  then 'dec 1.1'
-     when final_amt>=200 and MAX_ATOM_SCORE_P3D>=0.5 and (NUNIQUE__TIMEZONES_P2H-NUNIQUE__TIMEZONES_P5M>=2   
-                                                          or nunique__network_carriers_p2h>=2 
-                                                          or NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d>=1 
-                                                          OR NUNIQUE__INTNL_NETWORK_CARRIER_P7D>=1
-                                                          OR NUNIQUE__IPS_P1H>=2
-                                                          OR NUNIQUE__DEVICE_IDS_P1H>=2
-                                                          OR NUNIQUE__OS_VERSIONS_P1H>=2
+     when final_amt>=200 and MAX_ATOM_SCORE_P1D>=0.4 and (NUNIQUE__TIMEZONES_P2H>=2   
+                                                          or nunique__network_carriers_p2h>=2
+                                                         or NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d>=1 
+                                                           or NUNIQUE__INTNL_NETWORK_CARRIER_P7D>=1
+                                                         or  NUNIQUE__IPS_P1H>=3
+                                                        or NUNIQUE__DEVICE_IDS_P1H>=2
+                                                         or  NUNIQUE__OS_VERSIONS_P1H>=2
                                                          ) then 'dec 1.2'
           
      else 'no dec' end as cat
@@ -1253,6 +1138,7 @@ case when final_amt>=200 and  (count__email_change_by_user_p1d-count__email_chan
    from risk.test.risk_score_final_ep
     where 1=1
     and count__phone_change_p7d>0
+    and trunc(to_date(auth_event_created_ts),'month')< '2022-09-01'
     --and NUNIQUE__DEVICE_IDS_P1D>=3
     --and CNT_PHO_CHG_LIFE=0   
     --and cnt_eml_chg_p3>0
@@ -1266,62 +1152,13 @@ case when final_amt>=200 and  (count__email_change_by_user_p1d-count__email_chan
     --and max_atom_score_p30>=0.2
     --and CNT_LOGIN_DVC_P7D>=2
     --and available_funds<0
-    --and trunc(to_date(auth_event_created_ts),'month')< '2022-07-01'
+    --and trunc(to_date(auth_event_created_ts),'month')= '2022-09-01'
 group by 1
 order by 1
 ;
                                                              
 
 
-
-/*policy dev: no phone chg p7d*/
-select 
-case 
-     when final_amt>=50 and risk_score>=35 and (NUNIQUE__DEVICE_IDS_P5M>=3 or NUNIQUE__DEVICE_IDS_P2H-NUNIQUE__DEVICE_IDS_P5M>=3 or NUNIQUE__DEVICE_IDS_P1D-NUNIQUE__DEVICE_IDS_P2H>=3) then 'dec 1.1'
-     when final_amt>=50 and risk_score>=35 and (
-                                                   (NUNIQUE__NETWORK_CARRIERS_P2H-NUNIQUE__NETWORK_CARRIERS_P5M>=2)
-                                                or ( NUNIQUE__TIMEZONES_P2H-NUNIQUE__TIMEZONES_P5M>=2 or NUNIQUE__TIMEZONES_P1D-NUNIQUE__TIMEZONES_P2H>=2)
-                                               ) then 'dec 1.2'
-     
-     when final_amt>=50 and MAX_ATOM_SCORE_P2H>=0.45 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.3'
-     when final_amt>=100 and risk_score>=45 and datediff(day,last_provision_ts,auth_event_created_ts)=0 and COUNT__EVENT_LOGIN_FAILED_P2H>0 then 'dec 999'     
-      
-     else 'no dec' end as cat
-, count(*) as cnt_txnr
-
-, avg(dispute_ind) as dispute_rate
-, avg(dispute_unauth_ind) as dispute_unauth_rate
-, avg(dispute_aprv_ind) as dispute_appv_rate
-, avg(dispute_unauth_aprv_ind) as dispute_unauth_appv_rate
-
-, sum(dispute_ind) as dispute_cnt
-, sum(dispute_unauth_ind) as dispute_unauth_cnt
-, sum(dispute_aprv_ind) as dispute_appv_cnt
-, sum(dispute_unauth_aprv_ind) as dispute_unauth_appv_cnt
-
-, sum(final_amt) as sum_txn
-, sum(case when dispute_ind=1 then final_amt else 0 end) as sum_dispute_sum
-, sum(case when dispute_unauth_ind=1 then final_amt else 0 end) as sum_dispute_unauth_sum
-, sum(case when dispute_unauth_aprv_ind=1 then final_amt else 0 end) as sum_dispute_unauth_appv_sum
-   from risk.test.risk_score_final_ep
-    where 1=1
-    and COUNT__PHONE_CHANGE_P7D=0
-    --and CNT_PHO_CHG_LIFE=0   
-    --and cnt_eml_chg_p3>0
-    --and final_amt>=50
-    --and MIN_AUTH_PROVI_GAP>=7
-    --and risk_score>=35
-    --and final_amt>=25
-    --and cnt_login_dvc_p7d>=3
-    --and cnt_login_carrier_p7d>1
-    --and max_atom_score_p30>=0.2
-    --and max_atom_score_p30>=0.2
-    --and CNT_LOGIN_DVC_P7D>=2
-    --and available_funds<0
-    --and trunc(to_date(auth_event_created_ts),'month')< '2022-07-01'
-group by 1
-order by 1
-;
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -1342,6 +1179,133 @@ drop table risk.test.risk_score_app_action;
 drop table risk.test.risk_score_atm_events;
 
 
+/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+For simu and production simulation
+*/                                                             
+    
+with simu as (
+
+    select 
+    case when COUNT__PHONE_CHANGE_P7D=0 and final_amt>=50 and risk_score>=30 and max_atom_score_p30>=0.3 and  (NUNIQUE__DEVICE_IDS_P5M>=2 or NUNIQUE__DEVICE_IDS_P2H-NUNIQUE__DEVICE_IDS_P5M>=2 or NUNIQUE__DEVICE_IDS_P1D-NUNIQUE__DEVICE_IDS_P2H>=2) then 'dec 1.1' 
+         when COUNT__PHONE_CHANGE_P7D=0 and final_amt>=50 and MAX_ATOM_SCORE_P2H>=0.5 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.2'
+         when COUNT__PHONE_CHANGE_P7D>0 and final_amt>=200 and max_atom_score_p1d>=0.1 and  (count__email_change_by_user_p7d-count__email_change_by_user_p5m>=1)   then 'dec 2.1' 
+         when COUNT__PHONE_CHANGE_P7D>0 and final_amt>=200 and MAX_ATOM_SCORE_P1D>=0.4 and (NUNIQUE__TIMEZONES_P2H-NUNIQUE__TIMEZONES_P5M>=2   
+                                                          or nunique__network_carriers_p2h>=2
+                                                         or NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d>=1 
+                                                           or NUNIQUE__INTNL_NETWORK_CARRIER_P7D>=1
+                                                         or  NUNIQUE__IPS_P1H>=3
+                                                        or NUNIQUE__DEVICE_IDS_P1H>=2
+                                                         or  NUNIQUE__OS_VERSIONS_P1H>=2
+                                                         ) then 'dec 2.2'
+     end as cat
+    , a.*
+    from risk.test.risk_score_final_ep_volesti a
+    where 1=1
+    and auth_event_created_ts::date='2022-10-12'
+    and cat is not null
+        
+), shadow as (
+    
+    select distinct policy_name, decision_id, auth_id, user_id
+        ,row_number() over (partition by auth_id order by policy_name) as trigger_order
+        from chime.decision_platform.real_time_auth a
+        where 1=1
+        and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%'
+        and original_timestamp::date='2022-10-12'
+        and policy_result='criteria_met'
+        and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block')
+ 
+)
+
+select distinct 
+coalesce(a.auth_id,b.auth_id) as merged_auth_id
+,case when a.auth_id is null then 'in prod only'
+      when b.auth_id is null then 'in simu only'
+      else 'in both' end as recon_cat
+,coalesce(a.cat, b.policy_name) as policy_name
+,b.decision_id
+,coalesce(a.user_id,b.user_id) as user_id
+,a.COUNT__PHONE_CHANGE_P7D
+,a.final_amt
+,a.risk_score
+,a.max_atom_score_p30, a.MAX_ATOM_SCORE_P2H, max_atom_score_p1d
+,NUNIQUE__DEVICE_IDS_P1D, NUNIQUE__DEVICE_IDS_P2H, NUNIQUE__DEVICE_IDS_P5M
+,count__email_change_by_user_p7d
+,NUNIQUE__TIMEZONES_P2H
+,nunique__network_carriers_p2h
+,NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d
+,NUNIQUE__INTNL_NETWORK_CARRIER_P7D
+,NUNIQUE__IPS_P1H
+,NUNIQUE__DEVICE_IDS_P1H
+,NUNIQUE__OS_VERSIONS_P1H
+    from simu a
+    full outer join shadow b on (a.user_id=b.user_id and a.auth_id=b.auth_id)
+    
+    
+;
+
+
+with t1 as(
+ select a.*
+        ,row_number() over (partition by auth_id order by policy_name) as trigger_order
+        from chime.decision_platform.real_time_auth a
+        where 1=1
+        and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%'
+        and original_timestamp::date='2022-10-12'
+        and policy_result='criteria_met'
+        and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block')
+ 
+
+)
+    
+    select policy_name, count(distinct auth_id) as cnt, count(distinct case when trigger_order=1 then auth_id end) as cnt_dedup
+        from t1
+        group by 1
+        order by 1;
                                                              
-                                                             
-                                                             
+
+
+select 
+COUNT__PHONE_CHANGE_P7D
+,a.final_amt
+,a.risk_score
+,a.max_atom_score_p30, a.MAX_ATOM_SCORE_P2H, max_atom_score_p1d
+,NUNIQUE__DEVICE_IDS_P1D, NUNIQUE__DEVICE_IDS_P2H, NUNIQUE__DEVICE_IDS_P5M
+,count__email_change_by_user_p7d
+,NUNIQUE__TIMEZONES_P2H
+,nunique__network_carriers_p2h
+,NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d
+,NUNIQUE__INTNL_NETWORK_CARRIER_P7D
+,NUNIQUE__IPS_P1H
+,NUNIQUE__DEVICE_IDS_P1H
+,NUNIQUE__OS_VERSIONS_P1H
+    from risk.test.risk_score_final_ep_volesti a
+    where 1=1
+    and auth_id='6153122950'
+;
+
+/*rae view*/
+select req_amt, final_amt, risk_score, entry_type, auth_id
+    from edw_db.core.fct_realtime_auth_event
+    where 1=1
+    --and auth_id='1616662338'
+    and user_id='22527286'
+    and auth_event_created_ts::date='2022-10-12'
+;
+
+select settled_amt
+    from edw_db.core.ftr_transaction 
+    where 1=1
+    and user_id='22527286'
+    and convert_timezone('America/Los_Angeles',transaction_timestamp)::date='2022-10-12'
+;
+
+--6153122950
+select datediff(hour,b.auth_event_created_ts,a.timestamp) as hour_diff,b.auth_event_created_ts, a.*
+from edw_db.feature_store.atom_app_events_v2 a
+inner join risk.test.risk_score_final_ep_volesti  b on (a.user_id=b.user_id and a.timestamp between dateadd(day,-1,b.auth_event_created_ts) and b.auth_event_created_ts)
+where 1=1
+and a.user_id=14817111
+and b.auth_id='6153122950'
+order by timestamp desc
+;
