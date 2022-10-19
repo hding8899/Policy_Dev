@@ -12,80 +12,91 @@ key: user_id, auth_event_created_ts|auth_id
 
 create or replace table risk.test.risk_score_simu as(
 
-    select  
+	select  
     rae.auth_id
-    ,rae.auth_event_id
+	,rae.auth_event_id
     ,rae.auth_event_created_ts
     
-    ,rae.user_id
-    ,datediff(month, m.created_at::date, rae.auth_event_created_ts::date) as mob_member
+	,rae.user_id
+	,datediff(month, m.created_at::date, rae.auth_event_created_ts::date) as mob_member
     ,datediff(month, dc.card_created_ts::date, rae.auth_event_created_ts::date) as mob_card
-    ,m.state_code as user_state
+	,m.state_code as user_state
     
-    ,rae.account_status_cd
-    ,rae.card_status_cd as card_status_at_txn
-    ,rae.available_funds
+	,rae.account_status_cd
+	,rae.card_status_cd as card_status_at_txn
+	,rae.available_funds
 
-    ,rae.card_network_cd
-    ,rae.card_sub_network_cd
-    ,rae.auth_event_merchant_name_raw
-    ,rae.req_amt
-    ,rae.final_amt
-    ,rae.trans_ts
-    ,rae.mti_cd
+	,rae.card_network_cd
+	,rae.card_sub_network_cd
+	,rae.auth_event_merchant_name_raw
+	,rae.req_amt
+	,rae.final_amt
+	,rae.trans_ts
+	,rae.mti_cd
 
-    ,rae.merch_id
-    ,rae.mcc_cd
-    
-    ,rae.risk_score
+	,rae.merch_id
+	,rae.mcc_cd
+	
+	,rae.risk_score
     ,rae.pin_result_cd
-    ,rae.is_international
-    ,rae.acq_id
+	,rae.is_international
+	,rae.acq_id
 
-    ,rae.entry_type
-    ,rae.is_card_present
-    ,rae.is_cardholder_present
+	,rae.entry_type
+	,rae.is_card_present
+	,rae.is_cardholder_present
     ,case when rae.mcc_cd in ('6010','6011') then 1 or 0 end as atm_withdraw_ind
-    --,rae.pan,right(rae.pan,4) as pan_l4d
-    --,dual.auth_id as dual_auth_id
-    ,o2.type as dfe_rule_disable_status
-    ,o2.timestamp as dfe_rule_disable_time
-    ,case when rae.card_network_cd='Mastercard' then trim(substr(rae.auth_event_merchant_name_raw,38))
-          when rae.card_network_cd='Visa' then trim(substr(rae.auth_event_merchant_name_raw,37,2))
-     else null end as merchant_state
+	--,rae.pan,right(rae.pan,4) as pan_l4d
+	--,dual.auth_id as dual_auth_id
+	,o2.type as dfe_rule_disable_status
+	,o2.timestamp as dfe_rule_disable_time
+	,case when rae.card_network_cd='Mastercard' then trim(substr(rae.auth_event_merchant_name_raw,38))
+		  when rae.card_network_cd='Visa' then trim(substr(rae.auth_event_merchant_name_raw,37,2))
+	 else null end as merchant_state
     
     ,case when merchant_state<>user_state and user_state is not null and merchant_state is not null then 1 else 0 end as user_mrch_state_diff_ind
 
-    ,dt.dispute_created_at
-    ,dt.resolution_decision
-    ,case when dt.unique_transaction_id is not null then 1 else 0 end as dispute_ind
-    ,case when dt.unique_transaction_id is not null then datediff(day,rae.auth_event_created_ts,dt.dispute_created_at) else null end as dispute_txn_daydiff
-    ,case when dt.unique_transaction_id is not null and dt.reason in ('unauthorized_transfer','unauthorized_transaction','unauthorized_external_transfer') then 1 else 0 end as dispute_unauth_ind
-    ,case when dt.unique_transaction_id is not null and dt.reason in ('unauthorized_transfer','unauthorized_transaction','unauthorized_external_transfer') and (dt.resolution = 'Pending Resolution' or dt.resolution is null) then 1 else 0 end as dispute_unauth_pending_ind
-    ,case when dt.resolution_decision in ('approve','Approved') then 1 else 0 end as dispute_aprv_ind
-    ,case when dt.resolution_decision in ('approve','Approved') and dt.reason in ('unauthorized_transfer','unauthorized_transaction','unauthorized_external_transfer') then 1 else 0 end as dispute_unauth_aprv_ind
+	,dt.dispute_created_at
+	,dt.resolution_decision
+	,case when dt.unique_transaction_id is not null then 1 else 0 end as dispute_ind
+	,case when dt.unique_transaction_id is not null then datediff(day,rae.auth_event_created_ts,dt.dispute_created_at) else null end as dispute_txn_daydiff
+	,case when dt.unique_transaction_id is not null and dt.reason in ('unauthorized_transfer','unauthorized_transaction','unauthorized_external_transfer') then 1 else 0 end as dispute_unauth_ind
+	,case when dt.unique_transaction_id is not null and dt.reason in ('unauthorized_transfer','unauthorized_transaction','unauthorized_external_transfer') and (dt.resolution = 'Pending Resolution' or dt.resolution is null) then 1 else 0 end as dispute_unauth_pending_ind
+	,case when dt.resolution_decision in ('approve','Approved') then 1 else 0 end as dispute_aprv_ind
+	,case when dt.resolution_decision in ('approve','Approved') and dt.reason in ('unauthorized_transfer','unauthorized_transaction','unauthorized_external_transfer') then 1 else 0 end as dispute_unauth_aprv_ind
 
-    from edw_db.core.fct_realtime_auth_event as rae
-    left join edw_db.core.fct_realtime_auth_event as dual on rae.user_id=dual.user_id and (rae.auth_id=dual.original_auth_id)
-    left join segment.chime_prod.member_overrides as o2 on (o2.user_id=rae.user_id and o2.type='disable_fraud_rules' and rae.auth_event_created_ts<=dateadd('hour',1,o2.timestamp) and rae.auth_event_created_ts>o2.timestamp)
-    left join risk.prod.disputed_transactions as dt on (dt.user_id=rae.user_id and (dt.authorization_code=rae.auth_id or dt.authorization_code=dual.auth_id))
+	from edw_db.core.fct_realtime_auth_event as rae
+	left join edw_db.core.fct_realtime_auth_event as dual on rae.user_id=dual.user_id and (rae.auth_id=dual.original_auth_id)
+	left join segment.chime_prod.member_overrides as o2 on (o2.user_id=rae.user_id and o2.type='disable_fraud_rules' and rae.auth_event_created_ts<=dateadd('hour',1,o2.timestamp) and rae.auth_event_created_ts>o2.timestamp)
+	left join risk.prod.disputed_transactions as dt on (dt.user_id=rae.user_id and (dt.authorization_code=rae.auth_id or dt.authorization_code=dual.auth_id))
     left join chime.finance.members m on (rae.user_id=m.id)
     left join edw_db.core.dim_card dc on (rae.user_id=dc.user_id and right(rae.pan,4)=right(dc.card_number,4))
     
     
-    where 1=1
-    and (rae.auth_event_created_ts::date between '2022-07-01' and '2022-08-31' /*for dev*/ or rae.auth_event_created_ts::date >= '2022-10-10') /*for vol estimation and justification*/
-    and rae.original_auth_id=0
-    and rae.entry_type like '%Contactless%'/*relaxed to test strategies for other txn type*/
-    and rae.response_cd in ('00','10') /*approved txn*/
-    and rae.req_amt<0 /*debit spending only*/
+	where 1=1
+	and (rae.auth_event_created_ts::date between '2022-07-01' and '2022-08-31' /*for dev*/ or rae.auth_event_created_ts::date = '2022-10-18') /*for vol estimation and justification*/
+    --and rae.auth_event_created_ts::date between '2022-10-14' and '2022-10-15'
+	and rae.original_auth_id=0
+	and rae.entry_type like '%Contactless%'/*relaxed to test strategies for other txn type*/
+	and rae.response_cd in ('00','10') /*approved txn*/
+	and rae.req_amt<0 /*debit spending only*/
+    and rae.req_amt<=-50 /*reduce ep size by pre applying decision logic*/
     --and rae.card_network_cd='Visa' /*0-90 risk score applies to visa; contactless txn, mastercard and star is very minimum*/
-    qualify row_number() over (partition by rae.auth_event_id order by o2.timestamp,dt.dispute_created_at)=1
+	qualify row_number() over (partition by rae.auth_event_id order by o2.timestamp,dt.dispute_created_at)=1
 
 );
 
+select * from risk.test.risk_score_simu  where 1=1 and auth_id=1624617688;
 
+select * from edw_db.core.fct_realtime_auth_event where 1=1 and auth_id=1624617688 and user_id=27698522; 
 
+select count(*) from risk.test.risk_score_simu ;
+select trunc(auth_event_created_ts::date,'month') as mth, count(*) as cnt
+from risk.test.risk_score_simu 
+group by 1
+;
+
+select max(auth_event_created_ts::date) from risk.test.risk_score_simu ;
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 user_id - dispute history
@@ -194,7 +205,7 @@ with feature store features simulated:
 create or replace table risk.test.risk_score_login_hist as(
 select 
 a.auth_event_id
-/*look back 30 days*/ 
+/*look back 7 days*/ 
 ,count(distinct device_id) as nunique__device_ids_p7d
 ,count(distinct ip) as nunique__ips_p7d
 ,count(distinct network_carrier) as nunique__network_carriers_p7d
@@ -203,7 +214,6 @@ a.auth_event_id
 ,count(distinct intnl_network_carrier) as nunique__intnl_network_carrier_p7d
 ,count(distinct africa_network_carriers) as nunique__africa_network_carriers_p7d
 ,count(distinct africa_timezones) as nunique__africa_timezones_p7d
-
 
 /*look back 2 days*/       
 ,count(distinct case when b.session_timestamp >= dateadd(day,-2,a.auth_event_created_ts) then device_id end) as nunique__device_ids_p2d
@@ -265,10 +275,14 @@ a.auth_event_id
         
                 
               ) b on (a.user_id=b.user_id and b.session_timestamp between dateadd(day,-7,a.auth_event_created_ts) and a.auth_event_created_ts)
+    where 1=1
+    --and a.auth_id=195975097 and a.user_id=34956477
     group by 1
 );
 
 
+
+select count(*) from risk.test.risk_score_login_hist;
 
 
 
@@ -1057,9 +1071,9 @@ width_bucket(MAX_ATOM_SCORE_P3D, 0, 1, 10) as bin
 /*policy dev: no phone chg p7d*/
 select 
 case 
-     when final_amt>=50 and max_atom_score_p30>=0.35 and  NUNIQUE__DEVICE_IDS_P2H>=2 then 'dec 1.1'
+     when req_amt<=-50 and max_atom_score_p30>=0.35 and  NUNIQUE__DEVICE_IDS_P2H>=2 then 'dec 1.1'
     
-     when final_amt>=50 and risk_score>=35 and MAX_ATOM_SCORE_P1D>=0.1 and nunique__timezones_p7d>=2 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.2'
+     when req_amt<=-50 and risk_score>=35 and MAX_ATOM_SCORE_P1D>=0.1 and nunique__timezones_p7d>=2 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.2'
      
      --when final_amt>=50 and count__email_change_p7d>0 and risk_score>=35 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.3'
      --when final_amt>=100 and risk_score>=45 and datediff(day,last_provision_ts,auth_event_created_ts)=0 and COUNT__EVENT_LOGIN_FAILED_P2H>0 then 'dec 999'     
@@ -1107,9 +1121,9 @@ order by 1
 
 /*policy dev: phone chg p7d*/
 select 
-case when final_amt>=200 and max_atom_score_p1d>=0.1 and  (count__email_change_by_user_p7d-count__email_change_by_user_p5m>=1)   then 'dec 1.1'
+case when req_amt<=-200 and max_atom_score_p1d>=0.1 and  count__email_change_by_user_p7d>=1   then 'dec 1.1'
      --when final_amt>=200 and (NUNIQUE__TIMEZONES_P2H-NUNIQUE__TIMEZONES_P5M>=2)  then 'dec 1.1'
-     when final_amt>=200 and MAX_ATOM_SCORE_P1D>=0.4 and (NUNIQUE__TIMEZONES_P2H>=2   
+     when req_amt<=-200 and MAX_ATOM_SCORE_P1D>=0.4 and (NUNIQUE__TIMEZONES_P2H>=2   
                                                           or nunique__network_carriers_p2h>=2
                                                          or NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d>=1 
                                                            or NUNIQUE__INTNL_NETWORK_CARRIER_P7D>=1
@@ -1179,17 +1193,48 @@ drop table risk.test.risk_score_app_action;
 drop table risk.test.risk_score_atm_events;
 
 
-/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+
+
+
+/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 For simu and production simulation
 */                                                             
+
+
+/*triggered vol by policy overview*/
+with t1 as(
     
+     select a.*
+            ,row_number() over (partition by a.auth_id order by policy_name) as trigger_order
+            ,b.response_cd
+            from chime.decision_platform.real_time_auth a
+            left join edw_db.core.fct_realtime_auth_event b on (a.auth_id=b.auth_id and a.user_id=b.user_id)
+            where 1=1
+            and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%' /*!!! specofy rules to recon*/
+            and original_timestamp::date = '2022-10-18' /*!!! specofy dates to recon*/
+            and policy_result='criteria_met' and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block')
+            --and user_id=22527286
+)
+    
+    select policy_name, count(distinct auth_id) as cnt
+    , count(distinct case when trigger_order=1 then auth_id end) as cnt_dedup
+    , count(distinct case when trigger_order=1 and response_cd in ('00','10') then auth_id end) as cnt_dedup_appv
+        from t1
+        group by 1
+        order by 1;
+                            
+
+
+/*txn level prod and simu recon by dates*/
 with simu as (
 
     select 
-    case when COUNT__PHONE_CHANGE_P7D=0 and final_amt>=50 and risk_score>=30 and max_atom_score_p30>=0.3 and  (NUNIQUE__DEVICE_IDS_P5M>=2 or NUNIQUE__DEVICE_IDS_P2H-NUNIQUE__DEVICE_IDS_P5M>=2 or NUNIQUE__DEVICE_IDS_P1D-NUNIQUE__DEVICE_IDS_P2H>=2) then 'dec 1.1' 
-         when COUNT__PHONE_CHANGE_P7D=0 and final_amt>=50 and MAX_ATOM_SCORE_P2H>=0.5 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.2'
-         when COUNT__PHONE_CHANGE_P7D>0 and final_amt>=200 and max_atom_score_p1d>=0.1 and  (count__email_change_by_user_p7d-count__email_change_by_user_p5m>=1)   then 'dec 2.1' 
-         when COUNT__PHONE_CHANGE_P7D>0 and final_amt>=200 and MAX_ATOM_SCORE_P1D>=0.4 and (NUNIQUE__TIMEZONES_P2H-NUNIQUE__TIMEZONES_P5M>=2   
+    case when count__phone_change_p7d=0 and req_amt<=-50 and max_atom_score_p30>=0.35 and  NUNIQUE__DEVICE_IDS_P2H>=2 then 'dec 1.1'
+         when count__phone_change_p7d=0 and req_amt<=-50 and risk_score>=35 and MAX_ATOM_SCORE_P1D>=0.1 and nunique__timezones_p7d>=2 /*or CNT_DIST_DVC_P2H>=3*/ then 'dec 1.2'
+         when count__phone_change_p7d>0 and req_amt<=-200 and max_atom_score_p1d>=0.1 and  (count__email_change_by_user_p7d-count__email_change_by_user_p5m>=1)   then 'dec 2.1' 
+         when count__phone_change_p7d>0 and req_amt<=-200 and MAX_ATOM_SCORE_P1D>=0.4 and (NUNIQUE__TIMEZONES_P2H>=2   
                                                           or nunique__network_carriers_p2h>=2
                                                          or NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d>=1 
                                                            or NUNIQUE__INTNL_NETWORK_CARRIER_P7D>=1
@@ -1199,22 +1244,27 @@ with simu as (
                                                          ) then 'dec 2.2'
      end as cat
     , a.*
-    from risk.test.risk_score_final_ep_volesti a
+    from risk.test.risk_score_final_ep a
     where 1=1
-    and auth_event_created_ts::date='2022-10-12'
+    and auth_event_created_ts::date = '2022-10-18' /*!!! specofy dates to recon*/
     and cat is not null
         
 ), shadow as (
-    
-    select distinct policy_name, decision_id, auth_id, user_id
-        ,row_number() over (partition by auth_id order by policy_name) as trigger_order
-        from chime.decision_platform.real_time_auth a
-        where 1=1
-        and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%'
-        and original_timestamp::date='2022-10-12'
-        and policy_result='criteria_met'
-        and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block')
- 
+    select *
+    from(
+        select distinct policy_name, decision_id, a.auth_id, a.user_id
+            ,row_number() over (partition by a.user_id,a.auth_id order by policy_name) as trigger_order
+            from chime.decision_platform.real_time_auth a
+            left join edw_db.core.fct_realtime_auth_event b on (a.auth_id=b.auth_id and a.user_id=b.user_id)
+            where 1=1
+            and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%' /*!!! specofy rules to recon*/
+            and original_timestamp::date = '2022-10-18' /*!!! specofy dates to recon*/
+            and policy_result='criteria_met' 
+            --and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block') /*no need this condition for there could be allow rule to overwrite these actions*/
+            and b.response_cd in ('10','00')
+    ) a
+    where 1=1
+    --and a.trigger_order=1
 )
 
 select distinct 
@@ -1226,12 +1276,13 @@ coalesce(a.auth_id,b.auth_id) as merged_auth_id
 ,b.decision_id
 ,coalesce(a.user_id,b.user_id) as user_id
 ,a.COUNT__PHONE_CHANGE_P7D
-,a.final_amt
+,a.req_amt
+--,a.final_amt
 ,a.risk_score
 ,a.max_atom_score_p30, a.MAX_ATOM_SCORE_P2H, max_atom_score_p1d
 ,NUNIQUE__DEVICE_IDS_P1D, NUNIQUE__DEVICE_IDS_P2H, NUNIQUE__DEVICE_IDS_P5M
 ,count__email_change_by_user_p7d
-,NUNIQUE__TIMEZONES_P2H
+,NUNIQUE__TIMEZONES_P2H, nunique__timezones_p7d
 ,nunique__network_carriers_p2h
 ,NUNIQUE__AFRICA_NETWORK_CARRIERS_P7d
 ,NUNIQUE__INTNL_NETWORK_CARRIER_P7D
@@ -1244,29 +1295,65 @@ coalesce(a.auth_id,b.auth_id) as merged_auth_id
     
 ;
 
-
-with t1 as(
- select a.*
-        ,row_number() over (partition by auth_id order by policy_name) as trigger_order
-        from chime.decision_platform.real_time_auth a
-        where 1=1
-        and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%'
-        and original_timestamp::date='2022-10-12'
-        and policy_result='criteria_met'
-        and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block')
- 
-
-)
-    
-    select policy_name, count(distinct auth_id) as cnt, count(distinct case when trigger_order=1 then auth_id end) as cnt_dedup
-        from t1
-        group by 1
-        order by 1;
-                                                             
+                                 
 
 
-select 
-COUNT__PHONE_CHANGE_P7D
+---- individual account table review
+
+/*penny rule engine view - confirm if criteria met or not*/
+
+select a.*
+,b.req_amt, b.final_amt, b.risk_score, b.entry_type, b.auth_event_created_ts
+ from chime.decision_platform.real_time_auth a
+left join edw_db.core.fct_realtime_auth_event b on (a.auth_id=b.auth_id and a.user_id=b.user_id)
+where 1=1
+and policy_name like 'hr_mobilewallet_vrs_ato_suslogin%' /*!!! specofy rules to recon*/
+and original_timestamp::date ='2022-10-18' /*!!! specofy dates to recon*/
+--and decision_outcome in ('hard_block','merchant_block','deny','prompt_override','sanction_block')
+--and b.response_cd in ('10','00')
+and a.user_id=747885 and a.auth_id=6181279425
+;
+
+
+
+/*feature store features view - pull all calc feature values to compare with simu outcome*/
+
+select *
+    from chime.decision_platform.feature_results
+    where 1=1
+    and decision_id='9e15e911-04ea-4c46-93a5-8eb4f9fc0f88'
+;
+
+
+
+/*max atom score view*/
+
+--6153122950
+select datediff(hour,b.auth_event_created_ts,a.timestamp) as hour_diff,b.auth_event_created_ts, a.*
+from edw_db.feature_store.atom_app_events_v2 a
+inner join risk.test.risk_score_final_ep_volesti  b on (a.user_id=b.user_id and a.timestamp between dateadd(day,-1,b.auth_event_created_ts) and b.auth_event_created_ts)
+where 1=1
+and a.user_id=14817111
+and b.auth_id='6153122950'
+order by timestamp desc
+;
+
+
+/*usage view*/
+
+select datediff(hour, b.timestamp,a.auth_event_created_ts) as day_diff_ts
+, a.auth_event_created_ts,b.*
+    from edw_db.feature_store.atom_app_events_v2 b
+    left join risk.test.risk_score_final_ep  a on (a.user_id=b.user_id and b.timestamp between dateadd(day,-7,a.auth_event_created_ts) and a.auth_event_created_ts)
+    where 1=1
+    and a.user_id=747885 and a.auth_id=6181279425
+order by timestamp desc
+;
+
+
+/*simu ep view*/
+
+select a.COUNT__PHONE_CHANGE_P7D
 ,a.final_amt
 ,a.risk_score
 ,a.max_atom_score_p30, a.MAX_ATOM_SCORE_P2H, max_atom_score_p1d
@@ -1279,33 +1366,17 @@ COUNT__PHONE_CHANGE_P7D
 ,NUNIQUE__IPS_P1H
 ,NUNIQUE__DEVICE_IDS_P1H
 ,NUNIQUE__OS_VERSIONS_P1H
-    from risk.test.risk_score_final_ep_volesti a
+    from risk.test.risk_score_final_ep a
     where 1=1
-    and auth_id='6153122950'
+    and auth_id=1624617688
 ;
 
 /*rae view*/
-select req_amt, final_amt, risk_score, entry_type, auth_id
+select req_amt, final_amt, risk_score, entry_type, auth_id, user_id, auth_event_created_ts, original_auth_id, mti_cd
     from edw_db.core.fct_realtime_auth_event
     where 1=1
-    --and auth_id='1616662338'
-    and user_id='22527286'
-    and auth_event_created_ts::date='2022-10-12'
+    and auth_id=3519906399
+    and user_id=17292663
+    --and auth_event_created_ts::date='2022-10-12'
 ;
 
-select settled_amt
-    from edw_db.core.ftr_transaction 
-    where 1=1
-    and user_id='22527286'
-    and convert_timezone('America/Los_Angeles',transaction_timestamp)::date='2022-10-12'
-;
-
---6153122950
-select datediff(hour,b.auth_event_created_ts,a.timestamp) as hour_diff,b.auth_event_created_ts, a.*
-from edw_db.feature_store.atom_app_events_v2 a
-inner join risk.test.risk_score_final_ep_volesti  b on (a.user_id=b.user_id and a.timestamp between dateadd(day,-1,b.auth_event_created_ts) and b.auth_event_created_ts)
-where 1=1
-and a.user_id=14817111
-and b.auth_id='6153122950'
-order by timestamp desc
-;
