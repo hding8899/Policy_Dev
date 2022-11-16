@@ -1,5 +1,3 @@
-
-
 /*>>>>>>>>>>
 https://chime.hex.tech/global/app/1d47fa92-b5ba-4530-8095-b35f8ab71da3/latest
 (rule perf report)
@@ -134,4 +132,9 @@ and a.apprv_ind=1
 group by 1
 order by 1
 ;
+
+/*
+CNT	DISPUTE_RATE_DOLLAR	DISPUTE_RATE_CNT	SUM_DISPUTE_DOLLAR	CNT_DISPUTE
+47	0.8833436	0.87234	8,062.86	41
+*/
 
