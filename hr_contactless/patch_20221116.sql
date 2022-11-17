@@ -1,16 +1,14 @@
+
 /*>>>>>>>>>>
 https://chime.hex.tech/global/app/1d47fa92-b5ba-4530-8095-b35f8ab71da3/latest
 (rule perf report)
 https://app.snowflake.com/us-west-2/chime/wqPN6ZWthSZ#query
 (rule perf report underlying table logic)
-
 context:
-
 per the report, hr_mobilewallet_vrs_ato_suslogin_1_1's confirmed dispute rate is decent, but approved txn's dispute rate is high(>50% in Nov,2022);1_2's volume is small with low confimred dispute rate;
 the purpose of this anlysis is to identify: 
     1) based on current 1_1's logic, any way to hard block those who confirmed no fraud and then dispute
     2) if there is any room to push up the confimed dispute rate for 1_2 (not doing anything in this analysis!)
-
 Execution procedure:
     1) pull all fired population from 1_1 & incremntal only & approved(allow override) only
     2) dispute indicator
@@ -83,7 +81,6 @@ select policy_name, trunc(auth_event_created_ts::date,'month') as mth
 
 
 /*apprv auth or allow override reason breakdown:
-
     > fl_hurricane0928_allow_2 - allow override due to rule
     > override_list_v2 - allow override due to sms confirmed no fraud
 */
@@ -97,12 +94,19 @@ select a.*, b.policy_name as allow_policy_name, decision_outcome
 qualify row_number() over (partition by a.user_id, a.auth_id order by b.policy_name)=1
 )
 select allow_policy_name, count(*) as cnt
+, sum(dispute_ind)/sum(apprv_ind) as appv_disp_rate
     from t1
     group by 1
     order by 1
 ;
 
 -- among 135 auth, fl_hurricane0928_allow_2 override allowed 78 of it and rest are due to sms confimration of no fraud;
+
+/*
+ALLOW_POLICY_NAME	        CNT	APPV_DISP_RATE
+fl_hurricane0928_allow_2	73	0.547945
+override_list_v2	        62	0.241935
+*/
 
 
 
@@ -122,19 +126,19 @@ from risk.test.hding_hr_mobilewallet_revamp a
 left join risk.test.hding_hr_mobilewallet_revamp_final b on (a.user_id=b.user_id and a.auth_id=b.auth_id)
 where 1=1
 and a.incremental_ind=1
---and a.confirmed_nofraud_ind=1 and a.cfm_nofraud_disp_ind=1
+and a.apprv_ind=1
 and a.policy_name in ('hr_mobilewallet_vrs_ato_suslogin_1_1') 
 --and b.count__phone_change_p7d=0
+
 and max_atom_score_p1d>=0.5
 and a.mcc_cd in ('5912','5541')
 and avg__dollar_approved_p2d<140
-and a.apprv_ind=1
+
 group by 1
 order by 1
 ;
 
 /*
 CNT	DISPUTE_RATE_DOLLAR	DISPUTE_RATE_CNT	SUM_DISPUTE_DOLLAR	CNT_DISPUTE
-47	0.8833436	0.87234	8,062.86	41
+47	0.8833436	        0.87234	            8,062.86	        41
 */
-
