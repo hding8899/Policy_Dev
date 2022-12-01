@@ -281,10 +281,8 @@ https://github.com/1debit/ml-feature-library/blob/main/chime_ml/feature_library/
 			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.mcc_cd=rae.mcc_cd and rae.auth_event_created_ts between dateadd(day,-3,a.auth_event_created_ts) and dateadd(second,-1,a.auth_event_created_ts))
 		  	LEFT JOIN edw_db.core.fct_realtime_auth_event dual_auth ON rae.auth_id = dual_auth.original_auth_id AND rae.user_id = dual_auth.user_id
 		  	LEFT JOIN risk.prod.disputed_transactions d
-		            ON (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code)
-		                AND rae.user_id = d.user_id 
-		                AND resolution_decision = 'Approved'
-		                AND reason IN ('unauthorized_transfer', 'unauthorized_transaction', 'unauthorized_external_transfer')
+		            ON (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code) AND rae.user_id = d.user_id 
+		            
 
 		  	WHERE rae.original_auth_id = 0
 		    AND rae.req_amt < 0
