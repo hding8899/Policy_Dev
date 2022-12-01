@@ -141,41 +141,13 @@ https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families
     );
     
  
-/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-merchant user_id tran vel
-
-key: auth_event_id
-
-https://github.com/1debit/ml-feature-library/blob/main/chime_ml/feature_library/features/merchant_name_user_id__transact_vel.sql
-*/  
-    let tbl_mrch_uid_vel varchar := staging_prefix||'_mrch_uid_vel';
-
-	create or replace table identifier(:tbl_mrch_uid_vel) as(
-
-		SELECT 
-		a.auth_event_id
-
-		,sum(case when b.transaction_timestamp>=dateadd(hour,-2,a.auth_event_created_ts) then settled_amt * -1 else 0 end) as sum__txn_amt_mrchuid_p2h
-		,count(distinct case when b.transaction_timestamp>=dateadd(hour,-2,a.auth_event_created_ts) then transaction_id end) as count__txns_mrchuid_p2h
-
-		,sum(case when b.transaction_timestamp<dateadd(hour,-2,a.auth_event_created_ts) then settled_amt * -1 else 0 end) as sum__txn_amt_mrchuid_p90_p2h
-		,count(distinct case when b.transaction_timestamp<dateadd(hour,-2,a.auth_event_created_ts) then transaction_id end) as count__txns_mrchuid_p90_p2h
-
-		,sum(case when b.transaction_timestamp<dateadd(day,-2,a.auth_event_created_ts) then settled_amt * -1 else 0 end) as sum__txn_amt_mrchuid_p90_p2d
-		,count(distinct case when b.transaction_timestamp>=dateadd(day,-2,a.auth_event_created_ts) then transaction_id end) as count__txns_mrchuid_p90_p2d
-
-		from identifier(:driver_table) a
-		left join edw_db.core.fct_settled_transaction b on (a.user_id=b.user_id and a.auth_event_merchant_name_raw=b.merchant_name_raw and b.transaction_timestamp between dateadd(day,-90,a.auth_event_created_ts) and dateadd(second,-1,a.auth_event_created_ts))
-		WHERE settled_amt < 0
-		group by 1
-	);
-
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 merchant user_id tran vel(beta)
 
 key: auth_event_id
-
+offset: 7d
+lookback: 390/90
 */  
 
 	let tbl_mrch_uid_vel_b varchar := staging_prefix||'_mrch_uid_vel_b';
@@ -192,58 +164,97 @@ key: auth_event_id
 			,case when d.dispute_created_at is not null then 1 else 0 end as dispute_fraud
 
 			FROM identifier(:driver_table) a
-			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.auth_event_merchant_name_raw=rae.auth_event_merchant_name_raw and rae.auth_event_created_ts between dateadd(day,-90,a.auth_event_created_ts) and dateadd(second,-1,a.auth_event_created_ts))
+			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.auth_event_merchant_name_raw=rae.auth_event_merchant_name_raw and rae.auth_event_created_ts between dateadd(day,-390,a.auth_event_created_ts) and dateadd(day,-7,a.auth_event_created_ts))
 		  	LEFT JOIN edw_db.core.fct_realtime_auth_event dual_auth ON rae.auth_id = dual_auth.original_auth_id AND rae.user_id = dual_auth.user_id
-		  	LEFT JOIN risk.prod.disputed_transactions d
-		            ON (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code)
-		                AND rae.user_id = d.user_id 
-		                AND resolution_decision = 'Approved'
-		                AND reason IN ('unauthorized_transfer', 'unauthorized_transaction', 'unauthorized_external_transfer')
+		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id 
+		           
 
 		  	WHERE 1=1
 		    and rae.original_auth_id = 0
 		    AND rae.req_amt < 0
-		    AND rae.response_cd <> '85'
     )
     	SELECT auth_event_id,
-	        sum(amt) as sum__mrchuid_transactions_p90_b,
-	        count(auth_event_id) as count__mrchuid_transactions_p90_b,
-	        sum(case when dispute_fraud=0 and approved=1 then amt else 0 end) as sum__mrchuid_good_txn_p90_b,
-	        count(case when dispute_fraud=0 and approved=1 then auth_event_id else null end) as count__mrchuid_good_txn_p90_b,
-	        sum__mrchuid_good_txn_p90_b/nullifzero(sum__mrchuid_transactions_p90_b) as ratio_sum__mrchuid_good_txn_p90_b,
-	        count__mrchuid_good_txn_p90_b/nullifzero(count__mrchuid_transactions_p90_b) as ratio_count__mrchuid_good_txn_p90_b,
-	        sum(case when dispute_fraud = 1 and approved = 1 then amt else 0 end) as sum__mrchuid_fraud_gross_p90_b,
-	        count(case when dispute_fraud= 1 and approved=1 then auth_event_id else null end) as count__mrchuid_fraud_gross_p90_b,
+        
+            min(datediff(hour,past_auth_ts,curr_auth_ts)) as min__mrch_uid_hourgap_p390,
+            max(datediff(hour,past_auth_ts,curr_auth_ts)) as max__mrch_uid_hourgap_p390,
             
-            sum(case when past_auth_ts>=dateadd(day,-30,curr_auth_ts) then amt else 0 end) as sum__mrchuid_transactions_p30_b,
-	        count(case when past_auth_ts>=dateadd(day,-30,curr_auth_ts) then auth_event_id end) as count__mrchuid_transactions_p30_b,
-	        sum(case when past_auth_ts>=dateadd(day,-30,curr_auth_ts) and dispute_fraud=0 and approved=1 then amt else 0 end) as sum__mrchuid_good_txn_p30_b,
-	        count(case when past_auth_ts>=dateadd(day,-30,curr_auth_ts) and dispute_fraud=0 and approved=1 then auth_event_id else null end) as count__mrchuid_good_txn_p30_b,
-	        sum__mrchuid_good_txn_p30_b/nullifzero(sum__mrchuid_transactions_p30_b) as ratio_sum__mrchuid_good_txn_p30_b,
-	        count__mrchuid_good_txn_p30_b/nullifzero(count__mrchuid_transactions_p30_b) as ratio_count__mrchuid_good_txn_p30_b,
-	        sum(case when past_auth_ts>=dateadd(day,-30,curr_auth_ts) and dispute_fraud = 1 and approved = 1 then amt else 0 end) as sum__mrchuid_fraud_gross_p30_b,
-	        count(case when past_auth_ts>=dateadd(day,-30,curr_auth_ts) and dispute_fraud= 1 and approved=1 then auth_event_id else null end) as count__mrchuid_fraud_gross_p30_b,
-
-	        sum(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) then amt else 0 end) as sum__mrchuid_transactions_p1d_b,
-	        count(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) then auth_event_id end) as count__mrchuid_transactions_p1d_b,
-	        sum(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and dispute_fraud=0 and approved=1 then amt else 0 end) as sum__mrchuid_good_txn_p1d_b,
-	        count(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and dispute_fraud=0 and approved=1 then auth_event_id else null end) as count__mrchuid_good_txn_p1d_b,
-	        sum__mrchuid_good_txn_p1d_b/nullifzero(sum__mrchuid_transactions_p1d_b) as ratio_sum__mrchuid_good_txn_p1d_b,
-	        count__mrchuid_good_txn_p1d_b/nullifzero(count__mrchuid_transactions_p1d_b) as ratio_count__mrchuid_good_txn_p1d_b,
-	        sum(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and dispute_fraud = 1 and approved = 1 then amt else 0 end) as sum__mrchuid_fraud_gross_p1d_b,
-	        count(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and dispute_fraud= 1 and approved=1 then auth_event_id else null end) as count__mrchuid_fraud_gross_p1d_b,
-	  		
-	  		sum(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) then amt else 0 end) as sum__mrchuid_transactions_p2h_b,
-	        count(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) then auth_event_id end) as count__mrchuid_transactions_p2h_b,
-	        sum(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and dispute_fraud=0 and approved=1 then amt else 0 end) as sum__mrchuid_good_txn_p2h_b,
-	        count(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and dispute_fraud=0 and approved=1 then auth_event_id else null end) as count__mrchuid_good_txn_p2h_b,
-	        sum__mrchuid_good_txn_p2h_b/nullifzero(sum__mrchuid_transactions_p2h_b) as ratio_sum__mrchuid_good_txn_p2h_b,
-	        count__mrchuid_good_txn_p2h_b/nullifzero(count__mrchuid_transactions_p2h_b) as ratio_count__mrchuid_good_txn_p2h_b,
-	        sum(case when past_auth_ts>=dateadd(hour,-1,curr_auth_ts) and dispute_fraud = 1 and approved = 1 then amt else 0 end) as sum__mrchuid_fraud_gross_p2h_b,
-	        count(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and dispute_fraud= 1 and approved=1 then auth_event_id else null end) as count__mrchuid_fraud_gross_p2h_b
-	  	FROM t1
+            sum(amt) as sum__mrch_uid_txn_p390,
+            count(auth_event_id) as count__mrch_uid_txn_p390,
+            sum(case when approved=1 then amt else 0 end) as sum__mrch_uid_appv_txn_p390,
+            count(case when approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p390,
+            sum(case when dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p390,
+            count(case when dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p390,
+            sum__mrch_uid_appv_txn_p390/nullifzero(sum__mrch_uid_txn_p390) as ratio__mrch_uid_dlc_txn_sum_p390,
+            count__mrch_uid_appv_txn_p390/nullifzero(count__mrch_uid_txn_p390) as ratio__mrch_uid_dlc_txn_cnt_p390,
+            sum__mrch_uid_disp_txn_p390/nullifzero(sum__mrch_uid_appv_txn_p390) as ratio__mrch_uid_disp_txn_sum_p390,
+            count__mrch_uid_disp_txn_p390/nullifzero(count__mrch_uid_appv_txn_p390) as ratio__mrch_uid_disp_txn_cnt_p390,
+            
+            sum(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) then amt else 0 end) as sum__mrch_uid_txn_p90,
+            count(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) then auth_event_id end) as count__mrch_uid_txn_p90,
+            sum(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and approved=1 then amt else 0 end) as sum__mrch_uid_appv_txn_p90,
+            count(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p90,
+            sum(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p90,
+            count(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p90,
+            sum__mrch_uid_appv_txn_p90/nullifzero(sum__mrch_uid_txn_p90) as ratio__mrch_uid_dlc_txn_sum_p90,
+            count__mrch_uid_appv_txn_p90/nullifzero(count__mrch_uid_txn_p90) as ratio__mrch_uid_dlc_txn_cnt_p90,
+            sum__mrch_uid_disp_txn_p90/nullifzero(sum__mrch_uid_appv_txn_p90) as ratio__mrch_uid_disp_txn_sum_p90,
+            count__mrch_uid_disp_txn_p90/nullifzero(count__mrch_uid_appv_txn_p90) as ratio__mrch_uid_disp_txn_cnt_p90
+            
+        FROM t1
 	  	GROUP BY 1
 	);
+
+
+
+/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+merchant user_id tran ve2(beta)
+
+key: auth_event_id
+offset: 7d
+lookback: 390/90
+*/  
+
+	let tbl_mrch_uid_vel2_b varchar := staging_prefix||'_mrch_uid_vel2_b';
+
+	create or replace table identifier(:tbl_mrch_uid_vel2_b) as(
+
+		with t1 as( 
+	        select 
+			a.auth_event_id
+			,-1*rae.req_amt as amt  
+			,a.auth_event_created_ts as curr_auth_ts
+			,rae.auth_event_created_ts as past_auth_ts
+			,case when rae.response_cd in ('00', '10') then 1 else 0 end as approved
+			,case when d.dispute_created_at is not null then 1 else 0 end as dispute_fraud
+
+			FROM identifier(:driver_table) a
+			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.auth_event_merchant_name_raw=rae.auth_event_merchant_name_raw and rae.auth_event_created_ts between dateadd(day,-7,a.auth_event_created_ts) and dateadd(second,-1,a.auth_event_created_ts))
+		  	LEFT JOIN edw_db.core.fct_realtime_auth_event dual_auth ON rae.auth_id = dual_auth.original_auth_id AND rae.user_id = dual_auth.user_id
+		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id 
+		           
+
+		  	WHERE 1=1
+		    and rae.original_auth_id = 0
+		    AND rae.req_amt < 0
+    )
+    	SELECT auth_event_id,
+            min(datediff(hour,past_auth_ts,curr_auth_ts)) as min__mrch_uid_hourgap_p7d,
+            sum(amt) as sum__mrch_uid_txn_p7d,
+            count(auth_event_id) as count__mrch_uid_txn_p7d,
+            sum(case when approved=1 then amt else 0 end) as sum__mrch_uid_appv_txn_p7d,
+            count(case when approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p7d,
+            sum(case when dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p7d,
+            count(case when dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p7d,
+            sum__mrch_uid_appv_txn_p7d/nullifzero(sum__mrch_uid_txn_p7d) as ratio__mrch_uid_dlc_txn_sum_p7d,
+            count__mrch_uid_appv_txn_p7d/nullifzero(count__mrch_uid_txn_p7d) as ratio__mrch_uid_dlc_txn_cnt_p7d,
+            sum__mrch_uid_disp_txn_p7d/nullifzero(sum__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_sum_p7d,
+            count__mrch_uid_disp_txn_p7d/nullifzero(count__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_cnt_p7d
+            
+        FROM t1
+	  	GROUP BY 1
+	);
+
+
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -1068,6 +1079,35 @@ https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families
 
 
 
+/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+user fund loading behavior(dd, cash dep, transfer in etc.)
+
+key: auth_event_id
+
+with feature store features simulated:
+    user_id__dispute_to_spend
+
+https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families/user_id__dispute_to_spend/v1.sql
+*/
+
+
+    let tbl_user_funding varchar := staging_prefix||'_user_funding';
+
+	create or replace table identifier(:tbl_user_funding) as(
+
+      SELECT 
+      a.auth_event_id,
+      max(b.transaction_timestamp) as last__uid_funding_ts,
+      count(*) as count__uid_funding_p7d,
+      sum(settled_amt) as sum__uid_funding_p7d
+        
+	  FROM identifier(:driver_table) a
+      left join edw_db.core.fct_settled_transaction b on (a.user_id=b.user_id and b.transaction_timestamp between dateadd(day,-7,a.auth_event_created_ts) and a.auth_event_created_ts and b.settled_amt>0)
+     
+      group by 1
+
+	);
+
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -1407,48 +1447,44 @@ Final EP
 	    ,m.sum__txn_amt_p30
 	    ,m.sum__denied_txn_amt_p30
 
-	    /*mrch uid vel*/
-	    ,n.sum__txn_amt_mrchuid_p2h
-		,n.count__txns_mrchuid_p2h
-		,n.sum__txn_amt_mrchuid_p90_p2h
-		,n.count__txns_mrchuid_p90_p2h
-		,n.sum__txn_amt_mrchuid_p90_p2d
-		,n.count__txns_mrchuid_p90_p2d
-
 		/*mrch uid vel(beta)*/
-	    ,n2.sum__mrchuid_transactions_p90_b
-		,n2.count__mrchuid_transactions_p90_b
-		,n2.sum__mrchuid_good_txn_p90_b
-		,n2.count__mrchuid_good_txn_p90_b
-		,n2.ratio_sum__mrchuid_good_txn_p90_b
-		,n2.ratio_count__mrchuid_good_txn_p90_b
-		,n2.sum__mrchuid_fraud_gross_p90_b
-		,n2.count__mrchuid_fraud_gross_p90_b
-		,n2.sum__mrchuid_transactions_p30_b
-		,n2.count__mrchuid_transactions_p30_b
-		,n2.sum__mrchuid_good_txn_p30_b
-		,n2.count__mrchuid_good_txn_p30_b
-		,n2.ratio_sum__mrchuid_good_txn_p30_b
-		,n2.ratio_count__mrchuid_good_txn_p30_b
-		,n2.sum__mrchuid_fraud_gross_p30_b
-		,n2.count__mrchuid_fraud_gross_p30_b
-		,n2.sum__mrchuid_transactions_p1d_b
-		,n2.count__mrchuid_transactions_p1d_b
-		,n2.sum__mrchuid_good_txn_p1d_b
-		,n2.count__mrchuid_good_txn_p1d_b
-		,n2.ratio_sum__mrchuid_good_txn_p1d_b
-		,n2.ratio_count__mrchuid_good_txn_p1d_b
-		,n2.sum__mrchuid_fraud_gross_p1d_b
-		,n2.count__mrchuid_fraud_gross_p1d_b
-		,n2.sum__mrchuid_transactions_p2h_b
-		,n2.count__mrchuid_transactions_p2h_b
-		,n2.sum__mrchuid_good_txn_p2h_b
-		,n2.count__mrchuid_good_txn_p2h_b
-		,n2.ratio_sum__mrchuid_good_txn_p2h_b
-		,n2.ratio_count__mrchuid_good_txn_p2h_b
-		,n2.sum__mrchuid_fraud_gross_p2h_b
-		,n2.count__mrchuid_fraud_gross_p2h_b
+        ,n2.min__mrch_uid_hourgap_p390
+        ,n2.max__mrch_uid_hourgap_p390
+	    ,n2.sum__mrch_uid_txn_p390
+		,n2.count__mrch_uid_txn_p390
+		,n2.sum__mrch_uid_appv_txn_p390
+		,n2.count__mrch_uid_appv_txn_p390
+		,n2.sum__mrch_uid_disp_txn_p390
+		,n2.count__mrch_uid_disp_txn_p390
+		,n2.ratio__mrch_uid_dlc_txn_sum_p390
+		,n2.ratio__mrch_uid_dlc_txn_cnt_p390
+		,n2.ratio__mrch_uid_disp_txn_sum_p390
+		,n2.ratio__mrch_uid_disp_txn_cnt_p390
+        
+		,n2.sum__mrch_uid_txn_p90
+		,n2.count__mrch_uid_txn_p90
+		,n2.sum__mrch_uid_appv_txn_p90
+		,n2.count__mrch_uid_appv_txn_p90
+		,n2.sum__mrch_uid_disp_txn_p90
+		,n2.count__mrch_uid_disp_txn_p90
+		,n2.ratio__mrch_uid_dlc_txn_sum_p90
+		,n2.ratio__mrch_uid_dlc_txn_cnt_p90
+		,n2.ratio__mrch_uid_disp_txn_sum_p90
+		,n2.ratio__mrch_uid_disp_txn_cnt_p90
 
+        /*mrch uid vel2(beta;0s-7d)*/
+        ,n1.min__mrch_uid_hourgap_p7d
+	    ,n1.sum__mrch_uid_txn_p7d
+		,n1.count__mrch_uid_txn_p7d
+		,n1.sum__mrch_uid_appv_txn_p7d
+		,n1.count__mrch_uid_appv_txn_p7d
+		,n1.sum__mrch_uid_disp_txn_p7d
+		,n1.count__mrch_uid_disp_txn_p7d
+		,n1.ratio__mrch_uid_dlc_txn_sum_p7d
+		,n1.ratio__mrch_uid_dlc_txn_cnt_p7d
+		,n1.ratio__mrch_uid_disp_txn_sum_p7d
+		,n1.ratio__mrch_uid_disp_txn_cnt_p7d
+        
 		/*mcc uid vel(beta)*/
 		,o.sum__mccuid_transactions_p3d
 		,o.count__mccuid_transactions_p3d
@@ -1474,6 +1510,11 @@ Final EP
 		,o.ratio_count__mccuid_good_txn_p2h
 		,o.sum__mccuid_fraud_gross_p2h
 		,o.count__mccuid_fraud_gross_p2h
+        
+        /*user fund loading behavior*/
+        ,p.last__uid_funding_ts
+        ,p.count__uid_funding_p7d
+        ,p.sum__uid_funding_p7d
 
 	        from identifier(:driver_table) a
 	        left join identifier(:tbl_user_profile) b on (a.user_id=b.user_id)
@@ -1488,10 +1529,11 @@ Final EP
 	        left join identifier(:tbl_auth_vel_p2d) k on (a.auth_event_id=k.auth_event_id)
 	        left join identifier(:tbl_auth_vel_p2h) l on (a.auth_event_id=l.auth_event_id)
 	        left join identifier(:tbl_user_disputes) m on (a.auth_event_id=m.auth_event_id)
-
-	        left join identifier(:tbl_mrch_uid_vel) n on (a.auth_event_id=n.auth_event_id)
+            
+            left join identifier(:tbl_mrch_uid_vel2_b) n1 on (a.auth_event_id=n1.auth_event_id)
 	        left join identifier(:tbl_mrch_uid_vel_b) n2 on (a.auth_event_id=n2.auth_event_id)
 	        left join identifier(:tbl_mcc_uid_vel) o on (a.auth_event_id=o.auth_event_id)
+            left join identifier(:tbl_user_funding) p on (a.auth_event_id=p.auth_event_id)
 
 	);
  
@@ -1504,5 +1546,3 @@ $$
 
 
 call risk.test.feature_appending('risk.test.risky_mrch_eval_adhoc_top100','sp_feature','risk.test.risky_mrch_eval_adhoc_sp_final');
-
-
