@@ -166,7 +166,7 @@ lookback: 390/90
 			FROM identifier(:driver_table) a
 			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.auth_event_merchant_name_raw=rae.auth_event_merchant_name_raw and rae.auth_event_created_ts between dateadd(day,-390,a.auth_event_created_ts) and dateadd(day,-7,a.auth_event_created_ts))
 		  	LEFT JOIN edw_db.core.fct_realtime_auth_event dual_auth ON rae.auth_id = dual_auth.original_auth_id AND rae.user_id = dual_auth.user_id
-		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id 
+		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code or dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id and d.dispute_created_at<a.auth_event_created_ts
 		           
 
 		  	WHERE 1=1
@@ -207,7 +207,7 @@ lookback: 390/90
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-merchant user_id tran ve2(beta)
+merchant user_id tran vel2(beta)
 
 key: auth_event_id
 offset: 7d
@@ -230,7 +230,7 @@ lookback: 390/90
 			FROM identifier(:driver_table) a
 			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.auth_event_merchant_name_raw=rae.auth_event_merchant_name_raw and rae.auth_event_created_ts between dateadd(day,-7,a.auth_event_created_ts) and dateadd(second,-1,a.auth_event_created_ts))
 		  	LEFT JOIN edw_db.core.fct_realtime_auth_event dual_auth ON rae.auth_id = dual_auth.original_auth_id AND rae.user_id = dual_auth.user_id
-		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id 
+		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code or dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id and d.dispute_created_at<a.auth_event_created_ts
 		           
 
 		  	WHERE 1=1
@@ -280,8 +280,7 @@ https://github.com/1debit/ml-feature-library/blob/main/chime_ml/feature_library/
 			FROM identifier(:driver_table) a
 			left join edw_db.core.fct_realtime_auth_event rae on (a.user_id=rae.user_id and a.mcc_cd=rae.mcc_cd and rae.auth_event_created_ts between dateadd(day,-3,a.auth_event_created_ts) and dateadd(second,-1,a.auth_event_created_ts))
 		  	LEFT JOIN edw_db.core.fct_realtime_auth_event dual_auth ON rae.auth_id = dual_auth.original_auth_id AND rae.user_id = dual_auth.user_id
-		  	LEFT JOIN risk.prod.disputed_transactions d
-		            ON (rae.auth_id = d.authorization_code OR dual_auth.auth_id = d.authorization_code) AND rae.user_id = d.user_id 
+		  	LEFT JOIN risk.prod.disputed_transactions d on (rae.auth_id = d.authorization_code or dual_auth.auth_id = d.authorization_code) and rae.user_id = d.user_id and d.dispute_created_at<a.auth_event_created_ts
 		            
 
 		  	WHERE rae.original_auth_id = 0
@@ -1088,19 +1087,22 @@ with feature store features simulated:
 https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families/user_id__dispute_to_spend/v1.sql
 */
 
-
     let tbl_user_funding varchar := staging_prefix||'_user_funding';
 
 	create or replace table identifier(:tbl_user_funding) as(
 
       SELECT 
       a.auth_event_id,
-      max(b.transaction_timestamp) as last__uid_funding_ts,
-      count(*) as count__uid_funding_p7d,
-      sum(settled_amt) as sum__uid_funding_p7d
-        
+      min(datediff(day,b.transaction_timestamp,a.auth_event_created_ts)) as min__uid_funding_auth_daydiff,
+      sum(case when b.transaction_timestamp>dateadd(day,-7,a.auth_event_created_ts) then 1 else 0 end) as count__uid_funding_p7d,
+      
+      sum(case when b.transaction_timestamp>dateadd(day,-7,a.auth_event_created_ts) then settled_amt else 0 end) as sum__uid_funding_p7d,    
+      sum(case when b.transaction_timestamp>dateadd(day,-7,a.auth_event_created_ts) and b.transaction_cd in ('PMDK','PMDD','PMCN') then settled_amt else 0 end)/nullifzero(sum__uid_funding_p7d) as ratio__uid_ddfund_p7d,
+      sum(case when b.transaction_timestamp>dateadd(day,-7,a.auth_event_created_ts) and b.transaction_cd in ('PMGT','PMIQ','PMGO','PMVL','PMRL') then settled_amt else 0 end)/nullifzero(sum__uid_funding_p7d) as ratio__uid_cashfund_p7d,
+      sum__uid_funding_p7d/nullifzero(max(b.settled_amt)) as ratio__uid_sumfund_p7d_maxhist
+      
 	  FROM identifier(:driver_table) a
-      left join edw_db.core.fct_settled_transaction b on (a.user_id=b.user_id and b.transaction_timestamp between dateadd(day,-7,a.auth_event_created_ts) and a.auth_event_created_ts and b.settled_amt>0)
+      left join edw_db.core.fct_settled_transaction b on (a.user_id=b.user_id and b.transaction_timestamp between dateadd(day,-365,a.auth_event_created_ts) and a.auth_event_created_ts and b.settled_amt>0)
      
       group by 1
 
@@ -1544,3 +1546,4 @@ $$
 
 
 call risk.test.feature_appending('risk.test.risky_mrch_eval_adhoc_top100','sp_feature','risk.test.risky_mrch_eval_adhoc_sp_final');
+ 
