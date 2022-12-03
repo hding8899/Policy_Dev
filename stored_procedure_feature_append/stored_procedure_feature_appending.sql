@@ -1512,9 +1512,12 @@ Final EP
 		,o.count__mccuid_fraud_gross_p2h
         
         /*user fund loading behavior*/
-        ,p.last__uid_funding_ts
+        ,p.min__uid_funding_auth_daydiff
         ,p.count__uid_funding_p7d
         ,p.sum__uid_funding_p7d
+        ,p.ratio__uid_ddfund_p7d
+        ,p.ratio__uid_cashfund_p7d
+        ,p.ratio__uid_sumfund_p7d_maxhist
 
 	        from identifier(:driver_table) a
 	        left join identifier(:tbl_user_profile) b on (a.user_id=b.user_id)
