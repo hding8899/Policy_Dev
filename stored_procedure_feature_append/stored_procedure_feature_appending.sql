@@ -184,8 +184,8 @@ lookback: 390/90
             count(case when approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p390,
             sum(case when dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p390,
             count(case when dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p390,
-            sum__mrch_uid_appv_txn_p390/nullifzero(sum__mrch_uid_txn_p390) as ratio__mrch_uid_dlc_txn_sum_p390,
-            count__mrch_uid_appv_txn_p390/nullifzero(count__mrch_uid_txn_p390) as ratio__mrch_uid_dlc_txn_cnt_p390,
+            sum__mrch_uid_appv_txn_p390/nullifzero(sum__mrch_uid_txn_p390) as ratio__mrch_uid_appv_txn_sum_p390,
+            count__mrch_uid_appv_txn_p390/nullifzero(count__mrch_uid_txn_p390) as ratio__mrch_uid_appv_txn_cnt_p390,
             sum__mrch_uid_disp_txn_p390/nullifzero(sum__mrch_uid_appv_txn_p390) as ratio__mrch_uid_disp_txn_sum_p390,
             count__mrch_uid_disp_txn_p390/nullifzero(count__mrch_uid_appv_txn_p390) as ratio__mrch_uid_disp_txn_cnt_p390,
             
@@ -195,8 +195,8 @@ lookback: 390/90
             count(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p90,
             sum(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p90,
             count(case when past_auth_ts>=dateadd(day,-90,curr_auth_ts) and dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p90,
-            sum__mrch_uid_appv_txn_p90/nullifzero(sum__mrch_uid_txn_p90) as ratio__mrch_uid_dlc_txn_sum_p90,
-            count__mrch_uid_appv_txn_p90/nullifzero(count__mrch_uid_txn_p90) as ratio__mrch_uid_dlc_txn_cnt_p90,
+            sum__mrch_uid_appv_txn_p90/nullifzero(sum__mrch_uid_txn_p90) as ratio__mrch_uid_appv_txn_sum_p90,
+            count__mrch_uid_appv_txn_p90/nullifzero(count__mrch_uid_txn_p90) as ratio__mrch_uid_appv_txn_cnt_p90,
             sum__mrch_uid_disp_txn_p90/nullifzero(sum__mrch_uid_appv_txn_p90) as ratio__mrch_uid_disp_txn_sum_p90,
             count__mrch_uid_disp_txn_p90/nullifzero(count__mrch_uid_appv_txn_p90) as ratio__mrch_uid_disp_txn_cnt_p90
             
@@ -245,8 +245,8 @@ lookback: 390/90
             count(case when approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p7d,
             sum(case when dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p7d,
             count(case when dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p7d,
-            sum__mrch_uid_appv_txn_p7d/nullifzero(sum__mrch_uid_txn_p7d) as ratio__mrch_uid_dlc_txn_sum_p7d,
-            count__mrch_uid_appv_txn_p7d/nullifzero(count__mrch_uid_txn_p7d) as ratio__mrch_uid_dlc_txn_cnt_p7d,
+            sum__mrch_uid_appv_txn_p7d/nullifzero(sum__mrch_uid_txn_p7d) as ratio__mrch_uid_appv_txn_sum_p7d,
+            count__mrch_uid_appv_txn_p7d/nullifzero(count__mrch_uid_txn_p7d) as ratio__mrch_uid_appv_txn_cnt_p7d,
             sum__mrch_uid_disp_txn_p7d/nullifzero(sum__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_sum_p7d,
             count__mrch_uid_disp_txn_p7d/nullifzero(count__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_cnt_p7d
             
@@ -884,6 +884,81 @@ with feature store features simulated:
 https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families/user_id__realtime_auth_vel/v3.sql
 */
 
+    let tbl_auth_vel_p3090d varchar := staging_prefix||'_auth_vel_p3090d';
+    
+    create or replace table identifier(:tbl_auth_vel_p3090d) as(
+	select 
+	    a.auth_event_id
+	    /*past 30-90 days*/
+	    ,SUM(abs(amount)) AS sum__dollar_approved_p3090d
+	    ,SUM(case when lower(merchant_name) like ('%cash%app%') or lower(merchant_name) like ('%apple%cash%') or mcc in  
+	                                      (7801,7995,7995,7800, --GAMBLING MCC's
+	                                       4829,5399,6051,7299) --MAY 2022 DISPUTE ATTACK MCCs   
+	                                               then abs(amount) else 0 end) AS sum__risky_merchant_spend_p3090d
+	    ,AVG(ABS(amount)) AS avg__dollar_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' THEN ABS(amount) END) AS avg__debit_dollar_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Chip' THEN id END) AS count__debit_emv_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Chip' THEN ABS(amount) END) AS sum__debit_emv_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Chip' THEN ABS(amount) END) AS avg__debit_emv_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Contactless' THEN id END) AS count__debit_emv_contactless_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Contactless' THEN ABS(amount) END) AS sum__debit_emv_contactless_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Contactless' THEN ABS(amount) END) AS avg__debit_emv_contactless_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Fallback' THEN id END) AS count__debit_emv_fallback_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Fallback' THEN ABS(amount) END) AS sum__debit_emv_fallback_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'EMV Fallback' THEN ABS(amount) END) AS avg__debit_emv_fallback_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'Magnetic Stripe' THEN id END) AS count__debit_magstripe_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'Magnetic Stripe' THEN ABS(amount) END) AS sum__debit_magstripe_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'Magnetic Stripe' THEN ABS(amount) END) AS avg__debit_magstripe_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'Contactless' THEN id END) AS count__debit_contactless_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'Contactless' THEN ABS(amount) END) AS sum__debit_contactless_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'Contactless' THEN ABS(amount) END) AS avg__debit_contactless_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'Card Not Present' THEN id END) AS count__debit_cnp_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'Card Not Present' THEN ABS(amount) END) AS sum__debit_cnp_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'Card Not Present' THEN ABS(amount) END) AS avg__debit_cnp_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'checking' AND b.entry_type = 'Manual' THEN id END) AS count__debit_manual_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'checking' AND b.entry_type = 'Manual' THEN ABS(amount) END) AS sum__debit_manual_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'Manual' THEN ABS(amount) END) AS avg__debit_manual_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' THEN ABS(amount) END) AS avg__credit_dollar_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Chip' THEN id END) AS count__credit_emv_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Chip' THEN ABS(amount) END) AS sum__credit_emv_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Chip' THEN ABS(amount) END) AS avg__credit_emv_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Contactless' THEN id END) AS count__credit_emv_contactless_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Contactless' THEN ABS(amount) END) AS sum__credit_emv_contactless_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Contactless' THEN ABS(amount) END) AS avg__credit_emv_contactless_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Fallback' THEN id END) AS count__credit_emv_fallback_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Fallback' THEN ABS(amount) END) AS sum__credit_emv_fallback_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'EMV Fallback' THEN ABS(amount) END) AS avg__credit_emv_fallback_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Magnetic Stripe' THEN id END) AS count__credit_magstripe_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Magnetic Stripe' THEN ABS(amount) END) AS sum__credit_magstripe_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Magnetic Stripe' THEN ABS(amount) END) AS avg__credit_magstripe_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Contactless' THEN id END) AS count__credit_contactless_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Contactless' THEN ABS(amount) END) AS sum__credit_contactless_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Contactless' THEN ABS(amount) END) AS avg__credit_contactless_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Card Not Present' THEN id END) AS count__credit_cnp_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Card Not Present' THEN ABS(amount) END) AS sum__credit_cnp_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Card Not Present' THEN ABS(amount) END) AS avg__credit_cnp_approved_p3090d
+	    ,COUNT(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Manual' THEN id END) AS count__credit_manual_approved_p3090d
+	    ,SUM(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Manual' THEN ABS(amount) END) AS sum__credit_manual_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Manual' THEN ABS(amount) END) AS avg__credit_manual_approved_p3090d
+	    ,AVG(CASE WHEN account_type = 'secured_credit' AND b.entry_type = 'Card Not Present' THEN visa_risk_score END) AS avg__credit_cnp_approved_vrs_p3090d
+	    ,AVG(CASE WHEN account_type = 'checking' AND b.entry_type = 'Card Not Present' THEN visa_risk_score END) AS avg__debit_cnp_approved_vrs_p3090d
+	     
+	    from identifier(:driver_table) a
+	    left join (
+	                select user_id,timestamp,account_type,entry_type,amount,merchant_name,mcc,id,visa_risk_score               
+	                from segment.chime_prod.realtime_auth
+	                where 1=1
+	                and amount < 0.00
+	                and response_code='approved'
+	                and mti in ('0100','0200','0400')
+	                and visa_risk_score != 'None'
+	    ) b on (a.user_id=b.user_id and b.timestamp between dateadd(day,-90,a.auth_event_created_ts) and dateadd(day,-30,a.auth_event_created_ts))
+	    where 1=1
+	    group by 1
+	);
+
+
+
 	let tbl_auth_vel_p2d varchar := staging_prefix||'_auth_vel_p2d';
 
 	create or replace table identifier(:tbl_auth_vel_p2d) as(
@@ -952,7 +1027,7 @@ https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families
 	                and response_code='approved'
 	                and mti in ('0100','0200','0400')
 	                and visa_risk_score != 'None'
-	    ) b on (a.user_id=b.user_id and b.timestamp between dateadd(day,-2,a.auth_event_created_ts) and a.auth_event_created_ts)
+	    ) b on (a.user_id=b.user_id and b.timestamp between dateadd(day,-2,a.auth_event_created_ts) and dateadd(hour,-2,a.auth_event_created_ts))
 	    where 1=1
 	    group by 1
 	);
@@ -1109,10 +1184,9 @@ https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families
 	);
 
 
+
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 Final EP
-
 */
 
 	let tbl_final varchar :=output_table;
@@ -1122,6 +1196,7 @@ Final EP
 	    a.*
 
 	    /*profile*/
+        ,b.mob_enroll
 	    ,b.na__stated_income
 	    ,b.na__email_domain
 	    ,b.na__ld_bw_first_name_and_email
@@ -1330,6 +1405,58 @@ Final EP
 	    ,j.sum__rejected_check_amt_p15
 	    ,j.count__posted_check_p15
 
+        
+        /*auth vel p3090d*/
+	    ,k0.sum__dollar_approved_p3090d
+	    ,k0.sum__risky_merchant_spend_p3090d
+	    ,k0.avg__dollar_approved_p3090d
+	    ,k0.avg__debit_dollar_approved_p3090d
+	    ,k0.count__debit_emv_approved_p3090d
+	    ,k0.sum__debit_emv_approved_p3090d
+	    ,k0.avg__debit_emv_approved_p3090d
+	    ,k0.count__debit_emv_contactless_approved_p3090d
+	    ,k0.sum__debit_emv_contactless_approved_p3090d
+	    ,k0.avg__debit_emv_contactless_approved_p3090d
+	    ,k0.count__debit_emv_fallback_approved_p3090d
+	    ,k0.sum__debit_emv_fallback_approved_p3090d
+	    ,k0.avg__debit_emv_fallback_approved_p3090d
+	    ,k0.count__debit_magstripe_approved_p3090d
+	    ,k0.sum__debit_magstripe_approved_p3090d
+	    ,k0.avg__debit_magstripe_approved_p3090d
+	    ,k0.count__debit_contactless_approved_p3090d
+	    ,k0.sum__debit_contactless_approved_p3090d
+	    ,k0.avg__debit_contactless_approved_p3090d
+	    ,k0.count__debit_cnp_approved_p3090d
+	    ,k0.sum__debit_cnp_approved_p3090d
+	    ,k0.avg__debit_cnp_approved_p3090d
+	    ,k0.count__debit_manual_approved_p3090d
+	    ,k0.sum__debit_manual_approved_p3090d
+	    ,k0.avg__debit_manual_approved_p3090d
+	    ,k0.avg__credit_dollar_approved_p3090d
+	    ,k0.count__credit_emv_approved_p3090d
+	    ,k0.sum__credit_emv_approved_p3090d
+	    ,k0.avg__credit_emv_approved_p3090d
+	    ,k0.count__credit_emv_contactless_approved_p3090d
+	    ,k0.sum__credit_emv_contactless_approved_p3090d
+	    ,k0.avg__credit_emv_contactless_approved_p3090d
+	    ,k0.count__credit_emv_fallback_approved_p3090d
+	    ,k0.sum__credit_emv_fallback_approved_p3090d
+	    ,k0.avg__credit_emv_fallback_approved_p3090d
+	    ,k0.count__credit_magstripe_approved_p3090d
+	    ,k0.sum__credit_magstripe_approved_p3090d
+	    ,k0.avg__credit_magstripe_approved_p3090d
+	    ,k0.count__credit_contactless_approved_p3090d
+	    ,k0.sum__credit_contactless_approved_p3090d
+	    ,k0.avg__credit_contactless_approved_p3090d
+	    ,k0.count__credit_cnp_approved_p3090d
+	    ,k0.sum__credit_cnp_approved_p3090d
+	    ,k0.avg__credit_cnp_approved_p3090d
+	    ,k0.count__credit_manual_approved_p3090d
+	    ,k0.sum__credit_manual_approved_p3090d
+	    ,k0.avg__credit_manual_approved_p3090d
+	    ,k0.avg__credit_cnp_approved_vrs_p3090d
+	    ,k0.avg__debit_cnp_approved_vrs_p3090d
+        
 	    /*auth vel p2d*/
 	    ,k.sum__dollar_approved_p2d
 	    ,k.sum__risky_merchant_spend_p2d
@@ -1456,8 +1583,8 @@ Final EP
 		,n2.count__mrch_uid_appv_txn_p390
 		,n2.sum__mrch_uid_disp_txn_p390
 		,n2.count__mrch_uid_disp_txn_p390
-		,n2.ratio__mrch_uid_dlc_txn_sum_p390
-		,n2.ratio__mrch_uid_dlc_txn_cnt_p390
+		,n2.ratio__mrch_uid_appv_txn_sum_p390
+		,n2.ratio__mrch_uid_appv_txn_cnt_p390
 		,n2.ratio__mrch_uid_disp_txn_sum_p390
 		,n2.ratio__mrch_uid_disp_txn_cnt_p390
         
@@ -1467,8 +1594,8 @@ Final EP
 		,n2.count__mrch_uid_appv_txn_p90
 		,n2.sum__mrch_uid_disp_txn_p90
 		,n2.count__mrch_uid_disp_txn_p90
-		,n2.ratio__mrch_uid_dlc_txn_sum_p90
-		,n2.ratio__mrch_uid_dlc_txn_cnt_p90
+		,n2.ratio__mrch_uid_appv_txn_sum_p90
+		,n2.ratio__mrch_uid_appv_txn_cnt_p90
 		,n2.ratio__mrch_uid_disp_txn_sum_p90
 		,n2.ratio__mrch_uid_disp_txn_cnt_p90
 
@@ -1480,8 +1607,8 @@ Final EP
 		,n1.count__mrch_uid_appv_txn_p7d
 		,n1.sum__mrch_uid_disp_txn_p7d
 		,n1.count__mrch_uid_disp_txn_p7d
-		,n1.ratio__mrch_uid_dlc_txn_sum_p7d
-		,n1.ratio__mrch_uid_dlc_txn_cnt_p7d
+		,n1.ratio__mrch_uid_appv_txn_sum_p7d
+		,n1.ratio__mrch_uid_appv_txn_cnt_p7d
 		,n1.ratio__mrch_uid_disp_txn_sum_p7d
 		,n1.ratio__mrch_uid_disp_txn_cnt_p7d
         
@@ -1529,6 +1656,7 @@ Final EP
 	        left join identifier(:tbl_block_dvc_hist) h on (a.auth_event_id=h.auth_event_id)
 	        left join identifier(:tbl_debit_lnk_failure) i on (a.auth_event_id=i.auth_event_id)
 	        left join identifier(:tbl_check_deposit_hist) j on (a.auth_event_id=j.auth_event_id)
+            left join identifier(:tbl_auth_vel_p3090d) k0 on (a.auth_event_id=k0.auth_event_id)
 	        left join identifier(:tbl_auth_vel_p2d) k on (a.auth_event_id=k.auth_event_id)
 	        left join identifier(:tbl_auth_vel_p2h) l on (a.auth_event_id=l.auth_event_id)
 	        left join identifier(:tbl_user_disputes) m on (a.auth_event_id=m.auth_event_id)
