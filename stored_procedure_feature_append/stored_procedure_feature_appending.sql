@@ -1217,9 +1217,9 @@ key: auth_event_id
             b.auth_event_id
             ,count(*) as count__cards
             ,sum(case when a.card_status in ('lost','stolen','cancelled','blocked') then 1 else 0 end) as count__lostolen
-            ,min(datediff(day,coalesce(a.last_status_change_dt,a.card_created_ts),b.auth_event_created_ts)) as min__lostolen_daydiff
-         from edw_db.core.dim_card a
-         inner join identifier(:driver_table) b on (a.user_id=b.user_id and a.card_type=b.card_type and a.card_created_ts<b.auth_event_created_ts)
+            ,min(case when a.card_status in ('lost','stolen','cancelled','blocked') then datediff(day,a.last_status_change_dt,b.auth_event_created_ts) end) as min__lostolen_daydiff
+         from (select user_id, convert_timezone('America/Los_Angeles',last_status_change_dt) as last_status_change_dt, card_type from edw_db.core.dim_card) a
+         inner join identifier(:driver_table) b on (a.user_id=b.user_id and a.card_type=b.card_type and a.last_status_change_dt<b.auth_event_created_ts)
          group by 1
 
      );
