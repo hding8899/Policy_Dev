@@ -1,7 +1,7 @@
 create or replace procedure risk.test.feature_appending(driver_table varchar, staging_prefix varchar, output_table varchar)
 
 /*
-driver_table - with dev population(must have fields: user_id, auth_event_merchant_name_raw, mcc_cd, auth_event_id, auth_event_created_ts, req_amt, entry_type)
+driver_table - with dev population(must have fields: user_id, auth_event_merchant_name_raw, mcc_cd, auth_event_id, auth_event_created_ts, req_amt, entry_type, card_type(edw_db.core.dim_card))
 staging_prefix - used as staging table name prefix(e.g.: risk.test.'staging_prefix'_user_profile)
 output_table - final output table name
 */
@@ -248,7 +248,29 @@ lookback: 390/90
             sum__mrch_uid_appv_txn_p7d/nullifzero(sum__mrch_uid_txn_p7d) as ratio__mrch_uid_appv_txn_sum_p7d,
             count__mrch_uid_appv_txn_p7d/nullifzero(count__mrch_uid_txn_p7d) as ratio__mrch_uid_appv_txn_cnt_p7d,
             sum__mrch_uid_disp_txn_p7d/nullifzero(sum__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_sum_p7d,
-            count__mrch_uid_disp_txn_p7d/nullifzero(count__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_cnt_p7d
+            count__mrch_uid_disp_txn_p7d/nullifzero(count__mrch_uid_appv_txn_p7d) as ratio__mrch_uid_disp_txn_cnt_p7d,
+            
+            sum(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) then amt else 0 end) as sum__mrch_uid_txn_p1d,
+            count(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) then auth_event_id end) as count__mrch_uid_txn_p1d,
+            sum(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and approved=1 then amt else 0 end) as sum__mrch_uid_appv_txn_p1d,
+            count(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p1d,
+            sum(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p1d,
+            count(case when past_auth_ts>=dateadd(day,-1,curr_auth_ts) and dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p1d,
+            sum__mrch_uid_appv_txn_p1d/nullifzero(sum__mrch_uid_txn_p1d) as ratio__mrch_uid_appv_txn_sum_p1d,
+            count__mrch_uid_appv_txn_p1d/nullifzero(count__mrch_uid_txn_p1d) as ratio__mrch_uid_appv_txn_cnt_p1d,
+            sum__mrch_uid_disp_txn_p1d/nullifzero(sum__mrch_uid_appv_txn_p1d) as ratio__mrch_uid_disp_txn_sum_p1d,
+            count__mrch_uid_disp_txn_p1d/nullifzero(count__mrch_uid_appv_txn_p1d) as ratio__mrch_uid_disp_txn_cnt_p1d,
+            
+            sum(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) then amt else 0 end) as sum__mrch_uid_txn_p2h,
+            count(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) then auth_event_id end) as count__mrch_uid_txn_p2h,
+            sum(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and approved=1 then amt else 0 end) as sum__mrch_uid_appv_txn_p2h,
+            count(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and approved=1 then auth_event_id end) as count__mrch_uid_appv_txn_p2h,
+            sum(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and dispute_fraud=1 then amt else 0 end) as sum__mrch_uid_disp_txn_p2h,
+            count(case when past_auth_ts>=dateadd(hour,-2,curr_auth_ts) and dispute_fraud=1 then auth_event_id end) as count__mrch_uid_disp_txn_p2h,
+            sum__mrch_uid_appv_txn_p2h/nullifzero(sum__mrch_uid_txn_p2h) as ratio__mrch_uid_appv_txn_sum_p2h,
+            count__mrch_uid_appv_txn_p2h/nullifzero(count__mrch_uid_txn_p2h) as ratio__mrch_uid_appv_txn_cnt_p2h,
+            sum__mrch_uid_disp_txn_p2h/nullifzero(sum__mrch_uid_appv_txn_p2h) as ratio__mrch_uid_disp_txn_sum_p2h,
+            count__mrch_uid_disp_txn_p2h/nullifzero(count__mrch_uid_appv_txn_p2h) as ratio__mrch_uid_disp_txn_cnt_p2h
             
         FROM t1
 	  	GROUP BY 1
@@ -1156,10 +1178,6 @@ user fund loading behavior(dd, cash dep, transfer in etc.)
 
 key: auth_event_id
 
-with feature store features simulated:
-    user_id__dispute_to_spend
-
-https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families/user_id__dispute_to_spend/v1.sql
 */
 
     let tbl_user_funding varchar := staging_prefix||'_user_funding';
@@ -1183,6 +1201,28 @@ https://github.com/1debit/ml_workflows/blob/main/feature_library_v2/src/families
 
 	);
 
+
+
+/*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+user id, acct type level num of cards
+
+key: auth_event_id
+
+*/
+     let tbl_user_cardtype_cards varchar := staging_prefix||'_total_cards';
+
+	 create or replace table identifier(:tbl_user_cardtype_cards) as(
+     
+         select 
+            b.auth_event_id
+            ,count(*) as count__cards
+            ,sum(case when a.card_status in ('lost','stolen','cancelled','blocked') then 1 else 0 end) as count__lostolen
+            ,min(datediff(day,coalesce(a.last_status_change_dt,a.card_created_ts),b.auth_event_created_ts)) as min__lostolen_daydiff
+         from edw_db.core.dim_card a
+         inner join identifier(:driver_table) b on (a.user_id=b.user_id and a.card_type=b.card_type and a.card_created_ts<b.auth_event_created_ts)
+         group by 1
+
+     );
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -1612,6 +1652,28 @@ Final EP
 		,n1.ratio__mrch_uid_disp_txn_sum_p7d
 		,n1.ratio__mrch_uid_disp_txn_cnt_p7d
         
+	    ,n1.sum__mrch_uid_txn_p1d
+		,n1.count__mrch_uid_txn_p1d
+		,n1.sum__mrch_uid_appv_txn_p1d
+		,n1.count__mrch_uid_appv_txn_p1d
+		,n1.sum__mrch_uid_disp_txn_p1d
+		,n1.count__mrch_uid_disp_txn_p1d
+		,n1.ratio__mrch_uid_appv_txn_sum_p1d
+		,n1.ratio__mrch_uid_appv_txn_cnt_p1d
+		,n1.ratio__mrch_uid_disp_txn_sum_p1d
+		,n1.ratio__mrch_uid_disp_txn_cnt_p1d
+        
+	    ,n1.sum__mrch_uid_txn_p2h
+		,n1.count__mrch_uid_txn_p2h
+		,n1.sum__mrch_uid_appv_txn_p2h
+		,n1.count__mrch_uid_appv_txn_p2h
+		,n1.sum__mrch_uid_disp_txn_p2h
+		,n1.count__mrch_uid_disp_txn_p2h
+		,n1.ratio__mrch_uid_appv_txn_sum_p2h
+		,n1.ratio__mrch_uid_appv_txn_cnt_p2h
+		,n1.ratio__mrch_uid_disp_txn_sum_p2h
+		,n1.ratio__mrch_uid_disp_txn_cnt_p2h
+        
 		/*mcc uid vel(beta)*/
 		,o.sum__mccuid_transactions_p3d
 		,o.count__mccuid_transactions_p3d
@@ -1645,6 +1707,11 @@ Final EP
         ,p.ratio__uid_ddfund_p7d
         ,p.ratio__uid_cashfund_p7d
         ,p.ratio__uid_sumfund_p7d_maxhist
+        
+        /*user card type level total cnt counts*/
+        ,q.count__cards
+        ,q.count__lostolen
+        ,q.min__lostolen_daydiff
 
 	        from identifier(:driver_table) a
 	        left join identifier(:tbl_user_profile) b on (a.user_id=b.user_id)
@@ -1665,6 +1732,7 @@ Final EP
 	        left join identifier(:tbl_mrch_uid_vel_b) n2 on (a.auth_event_id=n2.auth_event_id)
 	        left join identifier(:tbl_mcc_uid_vel) o on (a.auth_event_id=o.auth_event_id)
             left join identifier(:tbl_user_funding) p on (a.auth_event_id=p.auth_event_id)
+            left join identifier(:tbl_user_cardtype_cards) q on (a.auth_event_id=q.auth_event_id)
 
 	);
  
@@ -1676,5 +1744,4 @@ $$
 
 
 
-call risk.test.feature_appending('risk.test.risky_mrch_eval_adhoc_top100','sp_feature','risk.test.risky_mrch_eval_adhoc_sp_final');
- 
+call risk.test.feature_appending('risk.test.risky_mrch_eval_adhoc_top50','sp_feature','risk.test.risky_mrch_eval_adhoc_sp_final');
